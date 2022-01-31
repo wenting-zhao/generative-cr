@@ -23,7 +23,7 @@ class Comet:
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
         task = "summarization"
         use_task_specific_params(self.model, task)
-        self.batch_size = 128
+        self.batch_size = 1
         self.decoder_start_token_id = None
 
     def generate(
@@ -64,7 +64,7 @@ class Comet:
                 scores = torch.where(summaries.sequences[..., 1:] <= 1, torch.Tensor([1.]).cuda(), scores)
                 all_scores.append(scores.cpu().tolist())
                 #print(scores, "333")
-                print(all_scores[-1])
+                #print(all_scores[-1])
                 dec = self.tokenizer.batch_decode(summaries.sequences, skip_special_tokens=True, clean_up_tokenization_spaces=False)
                 decs.append(dec)
 
@@ -162,9 +162,9 @@ if __name__ == "__main__":
         for line in fin:
             data.append(json.loads(line))
 
-    #idx = int(sys.argv[1])
-    #for d in [data[idx]]:
-    for d in data:
+    idx = int(sys.argv[1])
+    for d in [data[idx]]:
+    #for d in data:
         #head = f"{d['context']} </s> {d['question']} </s> {get_names(d['question'])}"
         head = f"{d['context']}"
         #name = get_names(d['question'])
@@ -175,8 +175,8 @@ if __name__ == "__main__":
 
     #results = comet.generate(queries, decode_method="beam", num_generate=5)
     results = comet.generate(queries, decode_method="beam", num_generate=1)
-    torch.save(results, "res.pt")
-    #print(data[idx])
-    #for i, res in enumerate(results):
-    #    print(all_relations[i], res)
+    #torch.save(results, "res.pt")
+    print(data[idx])
+    for i, res in enumerate(results):
+        print(all_relations[i], res)
 
