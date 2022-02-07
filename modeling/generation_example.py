@@ -23,7 +23,7 @@ class Comet:
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
         task = "summarization"
         use_task_specific_params(self.model, task)
-        self.batch_size = 1
+        self.batch_size = 128
         self.decoder_start_token_id = None
 
     def generate(
@@ -158,13 +158,13 @@ if __name__ == "__main__":
     #st = StanfordNERTagger('stanford-ner/classifiers/english.all.3class.distsim.crf.ser.gz', 'stanford-ner/stanford-ner.jar')
 
     data = []
-    with open("../data/socialIQA/socialIQa_v1.4_trn.jsonl", 'r') as fin:
+    with open("../data/socialIQA/socialIQa_v1.4_tst.jsonl", 'r') as fin:
         for line in fin:
             data.append(json.loads(line))
 
-    idx = int(sys.argv[1])
-    for d in [data[idx]]:
-    #for d in data:
+    #idx = int(sys.argv[1])
+    #for d in [data[idx]]:
+    for d in data:
         #head = f"{d['context']} </s> {d['question']} </s> {get_names(d['question'])}"
         head = f"{d['context']}"
         #name = get_names(d['question'])
@@ -175,8 +175,8 @@ if __name__ == "__main__":
 
     #results = comet.generate(queries, decode_method="beam", num_generate=5)
     results = comet.generate(queries, decode_method="beam", num_generate=1)
-    #torch.save(results, "res.pt")
-    print(data[idx])
-    for i, res in enumerate(results):
-        print(all_relations[i], res)
+    torch.save(results, "res.pt")
+    #print(data[idx])
+    #for i, res in enumerate(results):
+    #    print(all_relations[i], res)
 

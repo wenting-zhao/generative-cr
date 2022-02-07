@@ -4,7 +4,7 @@ from itertools import chain
 from dataclasses import dataclass
 from typing import Optional, Union
 import math
-from transformers import RobertaTokenizer, PreTrainedTokenizerBase, RobertaModel
+from transformers import AutoTokenizer, PreTrainedTokenizerBase, AutoModel
 from transformers import AdamW, SchedulerType
 from transformers import get_scheduler, set_seed
 from transformers.file_utils import PaddingStrategy
@@ -16,7 +16,9 @@ from torch.utils.data import DataLoader
 import torch.nn.functional as F
 from dataset import Dataset
 from tqdm.auto import tqdm
-from torch.nn import CrossEntropyLoss, BCELoss
+from torch.nn import CrossEntropyLoss
+import wandb
+wandb.login()
 
 @dataclass
 class DataCollatorForMultipleChoice:
@@ -60,9 +62,9 @@ def get_args():
     parser.add_argument("--valid_path", type=str, required=True)
     parser.add_argument("--test_path", type=str, required=True)
     parser.add_argument('--baseline', action='store_true')
-    parser.add_argument("--batch_size", '-b', default=16, type=int,
+    parser.add_argument("--batch_size", '-b', default=1, type=int,
                         help="batch size per gpu.")
-    parser.add_argument("--eval_batch_size", default=16, type=int,
+    parser.add_argument("--eval_batch_size", default=32, type=int,
                         help="eval batch size per gpu.")
     parser.add_argument("--epoch", '-epoch', default=10, type=int,
                         help="The number of epochs for fine-tuning.")
@@ -105,17 +107,17 @@ def main():
     logger = logging.getLogger(__name__)
 
     args = get_args()
-    train_dataset = Dataset(args.train_path, 'train', args.baseline)
-    eval_dataset = Dataset(args.valid_path, 'dev', args.baseline)
-    test_dataset = Dataset(args.test_path, 'test', args.baseline)
-    tokenizer = RobertaTokenizer.from_pretrained(args.model_dir)
+    train_dataset = Dataset(args.train_path, 'train', args.model_dir, args.baseline)
+    eval_dataset = Dataset(args.valid_path, 'dev', args.model_dir, args.baseline)
+    test_dataset = Dataset(args.test_path, 'test', args.model_dir, args.baseline)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_dir)
 
     data_collator = DataCollatorForMultipleChoice(tokenizer, padding='longest')
     train_dataloader = DataLoader(train_dataset, shuffle=True, collate_fn=data_collator, batch_size=args.batch_size)
     eval_dataloader = DataLoader(eval_dataset, collate_fn=data_collator, batch_size=args.eval_batch_size)
     test_dataloader = DataLoader(test_dataset, collate_fn=data_collator, batch_size=args.eval_batch_size)
 
-    model = RobertaModel.from_pretrained(args.model_dir)
+    model = AutoModel.from_pretrained(args.model_dir)
     no_decay = ["bias", "LayerNorm.weight"]
     optimizer_grouped_parameters = [
         {
@@ -142,7 +144,8 @@ def main():
         if not args.baseline:
             probs = sigmoid(logits)
             probs = probs.T * batch['scores'].view(1, -1)
-            reshaped_probs = probs.view(-1, args.num_choice, args.num_cst)
+            #reshaped_probs = probs.view(-1, args.num_choice, args.num_cst)
+            reshaped_probs = probs.view(1, args.num_choice, -1)
             reshaped_probs = torch.sum(reshaped_probs, dim=-1)
             return reshaped_probs
         else:
@@ -151,6 +154,8 @@ def main():
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     args.max_train_steps = args.epoch * num_update_steps_per_epoch
     total_batch_size = args.batch_size * args.gradient_accumulation_steps
+    
+    metric = load_metric("accuracy")
 
     lr_scheduler = get_scheduler(
         name=args.lr_scheduler_type,
@@ -169,9 +174,17 @@ def main():
     progress_bar = tqdm(range(args.max_train_steps))
     completed_steps = 0
 
+    name = "baseline" if args.baseline else "generative"
+    wandb.init(name=f'{name} training: model-{args.model_dir} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps}',
+           project='generative cr',
+           tags=['SocialIQA', 'baseline'])
+    wandb.config.lr = args.learning_rate
+    wandb.watch(model)
+
     for epoch in range(args.epoch):
         model.train()
         for step, batch in enumerate(train_dataloader):
+            #print([tokenizer.decode(batch["input_ids"][i].tolist()) for i in range(len(batch["input_ids"]))])
             for key in batch:
                 batch[key] = batch[key].to(device)
             outputs = model(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"])
@@ -179,18 +192,20 @@ def main():
             loss = loss_fct(probs, batch['labels'])
             loss = loss / args.gradient_accumulation_steps
             loss.backward()
-            if step % (100*args.gradient_accumulation_steps) == 0:
-                print(f"global step {completed_steps}: {loss.item()}")
+            #if step % (100*args.gradient_accumulation_steps) == 0:
+            #    print(f"global step {completed_steps}: {loss.item()}")
             if step % args.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
                 progress_bar.update(1)
                 completed_steps += 1
+                wandb.log({
+                    "step": completed_steps,
+                    "Train Loss": loss.item()})
 
             if step % (500*args.gradient_accumulation_steps) == 0:
                 model.eval()
-                metric = load_metric("accuracy")
                 for step, batch in enumerate(eval_dataloader):
                     for key in batch:
                         batch[key] = batch[key].to(device)
@@ -205,7 +220,10 @@ def main():
 
                 eval_metric = metric.compute()
                 #print(f"epoch {epoch}: {eval_metric}")
-                print(f"global step {completed_steps}: {eval_metric}")
+                #print(f"global step {completed_steps}: {eval_metric}")
+                wandb.log({
+                    "step": completed_steps,
+                    "Valid Acc": eval_metric})
 
 if __name__ == '__main__':
     main()
