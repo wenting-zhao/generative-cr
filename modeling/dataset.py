@@ -40,7 +40,6 @@ def preprocess_function(examples, tokenizer, ending_names, baseline=False):
     if baseline:
         return {k: [v[i:i+num_answers] for i in range(0, len(v), num_answers)] for k, v in tokenized_examples.items()}
     else:
-        #return {k: [v[i:i+num_answers*num_triplets] for i in range(0, len(v), num_answers*num_triplets)] for k, v in tokenized_examples.items()}
         return {k: [v[lens[i]:lens[i+1]] for i in range(len(lens)-1)] for k, v in tokenized_examples.items()}
 
 def prepare(filename, split, path, baseline=False):
@@ -75,8 +74,9 @@ def prepare(filename, split, path, baseline=False):
         features = preprocess_function(data, tokenizer, ending_names, baseline)
         with open(f"cache/{split}_encodings.pkl", 'wb') as f:
             pickle.dump(features, f)
-    #features['scores'] = [s * len(ending_names) for s in scores]
     features['scores'] = [e['score'] * len(ending_names) for e in data]
+    features['cqs'] = [[f"{e['context']} {tokenizer.sep_token} {e['question']} {tokenizer.sep_token} {r}" for c, r in zip(cst, all_relations) if c.strip() != 'none'] for cst, e in zip(csts, data)]
+    features['cqs'] = [tokenizer(l, padding='longest', return_tensors='pt') for l in features['cqs']]
     labels = []
     for item in data:
         label = item['correct']

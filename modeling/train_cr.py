@@ -1,4 +1,5 @@
 import argparse
+from copy import deepcopy
 import logging
 from itertools import chain
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ import torch.nn.functional as F
 from dataset import Dataset
 from tqdm.auto import tqdm
 from torch.nn import CrossEntropyLoss
+from torch.nn import NLLLoss
 import wandb
 wandb.login()
 
@@ -30,6 +32,7 @@ class DataCollatorForMultipleChoice:
     def __call__(self, features):
         label_name = "label" if "label" in features[0].keys() else "labels"
         labels = [feature.pop(label_name) for feature in features]
+        cqs = [feature.pop("cqs") for feature in features]
         scores = []
         for feature in features:
             scores += feature.pop("scores")
@@ -52,6 +55,7 @@ class DataCollatorForMultipleChoice:
         #batch = {k: v.view(batch_size, num_choices, -1) for k, v in batch.items()}
         # Add back labels
         batch["labels"] = torch.tensor(labels, dtype=torch.int64)
+        batch["cqs"] = cqs
         batch["scores"] = torch.tensor([np.prod(l) for l in scores], dtype=torch.float)
         batch["scores"] = batch["scores"].view(-1, 1)
         return batch
@@ -62,6 +66,9 @@ def get_args():
     parser.add_argument("--valid_path", type=str, required=True)
     parser.add_argument("--test_path", type=str, required=True)
     parser.add_argument('--baseline', action='store_true')
+    parser.add_argument('--nolog', action='store_true')
+    parser.add_argument("--minimum", default=0.62, type=float,
+                        help="minimum acc to start run test.")
     parser.add_argument("--batch_size", '-b', default=1, type=int,
                         help="batch size per gpu.")
     parser.add_argument("--eval_batch_size", default=32, type=int,
@@ -74,6 +81,8 @@ def get_args():
                         help="The number of commonsense triplets.")
     parser.add_argument("--model_dir", default="roberta-large", type=str,
                         help="The directory where the pretrained model will be loaded.")
+    parser.add_argument("--output_model_dir", default="./saved_models", type=str,
+                        help="The directory where the pretrained model will be saved.")
     parser.add_argument("--weight_decay", type=float, default=0.0, help="Weight decay to use.")
     parser.add_argument(
         "--num_warmup_steps", type=int, default=0, help="Number of steps for the warmup in the lr scheduler."
@@ -117,52 +126,76 @@ def main():
     eval_dataloader = DataLoader(eval_dataset, collate_fn=data_collator, batch_size=args.eval_batch_size)
     test_dataloader = DataLoader(test_dataset, collate_fn=data_collator, batch_size=args.eval_batch_size)
 
-    model = AutoModel.from_pretrained(args.model_dir)
-    no_decay = ["bias", "LayerNorm.weight"]
-    optimizer_grouped_parameters = [
-        {
-            "params": [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
-            "weight_decay": args.weight_decay,
-        },
-        {
-            "params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)],
-            "weight_decay": 0.0,
-        },
-    ]
-    optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate)
-    loss_fct = CrossEntropyLoss()
-    dropout = nn.Dropout(model.config.hidden_dropout_prob)
-    classifier = nn.Linear(model.config.hidden_size, 1)
-    classifier = classifier.to(device)
-    sigmoid = nn.Sigmoid()
-    model.to(device)
-
-    def compute_logits(outputs):
-        pooled_output = outputs[1]
-        pooled_output = dropout(pooled_output)
-        logits = classifier(pooled_output)
-        if not args.baseline:
-            probs = sigmoid(logits)
-            probs = probs.T * batch['scores'].view(1, -1)
-            #reshaped_probs = probs.view(-1, args.num_choice, args.num_cst)
-            reshaped_probs = probs.view(1, args.num_choice, -1)
-            reshaped_probs = torch.sum(reshaped_probs, dim=-1)
-            return reshaped_probs
-        else:
-            return logits.view(-1, args.num_choice)
+    def get_model_optim():
+        model = AutoModel.from_pretrained(args.model_dir)
+        no_decay = ["bias", "LayerNorm.weight"]
+        optimizer_grouped_parameters = [
+            {
+                "params": [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
+                "weight_decay": args.weight_decay,
+            },
+            {
+                "params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)],
+                "weight_decay": 0.0,
+            },
+        ]
+        optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate)
+        return model, optimizer
 
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     args.max_train_steps = args.epoch * num_update_steps_per_epoch
     total_batch_size = args.batch_size * args.gradient_accumulation_steps
-    
-    metric = load_metric("accuracy")
 
-    lr_scheduler = get_scheduler(
+    model_a, optim_a = get_model_optim()
+    dropout_a = nn.Dropout(model_a.config.hidden_dropout_prob)
+    classifier_a = nn.Linear(model_a.config.hidden_size, 1)
+    classifier_a = classifier_a.to(device)
+    model_a.to(device)
+    lr_scheduler_a = get_scheduler(
         name=args.lr_scheduler_type,
-        optimizer=optimizer,
+        optimizer=optim_a,
         num_warmup_steps=args.num_warmup_steps,
         num_training_steps=args.max_train_steps,
     )
+
+    if not args.baseline:
+        model_r, optim_r = get_model_optim()
+        dropout_r = nn.Dropout(model_r.config.hidden_dropout_prob)
+        classifier_r = nn.Linear(model_r.config.hidden_size, 1)
+        classifier_r = classifier_r.to(device)
+        model_r.to(device)
+        lr_scheduler_r = get_scheduler(
+            name=args.lr_scheduler_type,
+            optimizer=optim_r,
+            num_warmup_steps=args.num_warmup_steps,
+            num_training_steps=args.max_train_steps,
+        )
+
+    loss_fct = NLLLoss()
+    m = nn.Softmax(dim=0)
+
+    def compute_logits(outputs, b, outputs_r=None):
+        pooled_output = outputs[1]
+        pooled_output = dropout_a(pooled_output)
+        logits = classifier_a(pooled_output)
+        if not args.baseline:
+            pooled_output_r = outputs_r[1]
+            pooled_output_r = dropout_r(pooled_output_r)
+            logits_r = classifier_r(pooled_output_r)
+            probs_r = m(logits_r)
+            probs = m(logits)
+            probs = probs.T * b['scores'].view(1, -1)
+            #reshaped_probs = probs.view(-1, args.num_choice, args.num_cst)
+            reshaped_probs = probs.view(1, args.num_choice, -1)
+            reshaped_probs = torch.permute(reshaped_probs, (0, 2, 1))
+            reshaped_probs = reshaped_probs * probs_r
+            reshaped_probs = torch.permute(reshaped_probs, (0, 2, 1))
+            reshaped_probs = torch.sum(reshaped_probs, dim=-1)
+            return reshaped_probs
+        else:
+            return m(logits).view(-1, args.num_choice)
+ 
+    metric = load_metric("accuracy")
 
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
@@ -175,55 +208,92 @@ def main():
     completed_steps = 0
 
     name = "baseline" if args.baseline else "generative"
-    wandb.init(name=f'{name} training: model-{args.model_dir} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps}',
-           project='generative cr',
-           tags=['SocialIQA', 'baseline'])
-    wandb.config.lr = args.learning_rate
-    wandb.watch(model)
+    if not args.nolog:
+        wandb.init(name=f'{name} training (joint): model-{args.model_dir} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps}',
+               project='generative cr',
+               tags=['SocialIQA'])
+        wandb.config.lr = args.learning_rate
+        wandb.watch(model_a)
+        if not args.baseline:
+            wandb.watch(model_r)
+    best_valid = 0
+
+    def evaluate(dataloader, split):
+        model_a.eval()
+        if not args.baseline:
+            model_r.eval()
+        for step, eval_batch in enumerate(dataloader):
+            eval_batch_r = deepcopy(eval_batch['cqs'][0])
+            del eval_batch['cqs']
+            for key in eval_batch_r:
+                eval_batch_r[key] = eval_batch_r[key].to(device)
+            for key in eval_batch:
+                eval_batch[key] = eval_batch[key].to(device)
+            with torch.no_grad():
+                outputs = model_a(input_ids=eval_batch["input_ids"], attention_mask=eval_batch["attention_mask"])
+                if not args.baseline:
+                    outputs_r = model_r(input_ids=eval_batch_r["input_ids"], attention_mask=eval_batch_r["attention_mask"])
+            if not args.baseline:
+                probs = compute_logits(outputs, eval_batch, outputs_r)
+            else:
+                probs = compute_logits(outputs)
+            predictions = probs.argmax(dim=-1)
+            metric.add_batch(
+                predictions=predictions,
+                references=eval_batch["labels"],
+            )
+
+        eval_metric = metric.compute()
+        if not args.nolog:
+            wandb.log({
+                "step": completed_steps,
+                f"{split} Acc": eval_metric})
+        return eval_metric['accuracy']
 
     for epoch in range(args.epoch):
-        model.train()
+        model_a.train()
+        if not args.baseline:
+            model_r.train()
         for step, batch in enumerate(train_dataloader):
-            #print([tokenizer.decode(batch["input_ids"][i].tolist()) for i in range(len(batch["input_ids"]))])
+            batch_r = deepcopy(batch['cqs'][0])
+            del batch['cqs']
+            for key in batch_r:
+                batch_r[key] = batch_r[key].to(device)
             for key in batch:
                 batch[key] = batch[key].to(device)
-            outputs = model(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"])
-            probs = compute_logits(outputs)
-            loss = loss_fct(probs, batch['labels'])
+            outputs = model_a(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"])
+            if not args.baseline:
+                outputs_r = model_r(input_ids=batch_r["input_ids"], attention_mask=batch_r["attention_mask"])
+            if not args.baseline:
+                probs = compute_logits(outputs, batch, outputs_r)
+            else:
+                probs = compute_logits(outputs)
+            loss = loss_fct(torch.log(probs), batch['labels'])
             loss = loss / args.gradient_accumulation_steps
             loss.backward()
-            #if step % (100*args.gradient_accumulation_steps) == 0:
-            #    print(f"global step {completed_steps}: {loss.item()}")
             if step % args.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
-                optimizer.step()
-                lr_scheduler.step()
-                optimizer.zero_grad()
+                optim_a.step()
+                lr_scheduler_a.step()
+                optim_a.zero_grad()
+                if not args.baseline:
+                    optim_r.step()
+                    lr_scheduler_r.step()
+                    optim_r.zero_grad()
                 progress_bar.update(1)
                 completed_steps += 1
-                wandb.log({
-                    "step": completed_steps,
-                    "Train Loss": loss.item()})
+                if not args.nolog:
+                    wandb.log({
+                        "step": completed_steps,
+                        "Train Loss": loss.item()})
 
             if step % (500*args.gradient_accumulation_steps) == 0:
-                model.eval()
-                for step, batch in enumerate(eval_dataloader):
-                    for key in batch:
-                        batch[key] = batch[key].to(device)
-                    with torch.no_grad():
-                        outputs = model(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"])
-                    probs = compute_logits(outputs)
-                    predictions = probs.argmax(dim=-1)
-                    metric.add_batch(
-                        predictions=predictions,
-                        references=batch["labels"],
-                    )
-
-                eval_metric = metric.compute()
-                #print(f"epoch {epoch}: {eval_metric}")
-                #print(f"global step {completed_steps}: {eval_metric}")
-                wandb.log({
-                    "step": completed_steps,
-                    "Valid Acc": eval_metric})
+                acc = evaluate(eval_dataloader, "Valid")
+                if acc > best_valid and acc > args.minimum:
+                    evaluate(test_dataloader, "Test")
+                    best_valid = acc
+                    model_a.save_pretrained(f"{args.output_model_dir}_a")
+                    if not args.baseline:
+                        model_r.save_pretrained(f"{args.output_model_dir}_r")
 
 if __name__ == '__main__':
     main()
