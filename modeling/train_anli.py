@@ -229,9 +229,14 @@ def main():
     completed_steps = 0
 
     if not args.nolog:
-        wandb.init(name=f'model-{args.model_dir} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff}',
-               project='generative aNLI',
-               tags=['anli'])
+        if args.supervised:
+            wandb.init(name=f'supervised-model-{args.model_dir} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff}',
+                   project='generative aNLI',
+                   tags=['anli'])
+        else:
+            wandb.init(name=f'model-{args.model_dir} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff}',
+                   project='generative aNLI',
+                   tags=['anli'])
         wandb.config.lr = args.learning_rate
         wandb.watch(model)
 
