@@ -90,6 +90,7 @@ def get_args():
     parser.add_argument("--valid_path", type=str, required=True)
     parser.add_argument("--test_path", type=str)
     parser.add_argument('--baseline', action='store_true')
+    parser.add_argument('--supervised', action='store_true')
     parser.add_argument('--nolog', action='store_true')
     parser.add_argument("--minimum", default=0.62, type=float,
                         help="minimum acc to start run test.")
@@ -248,8 +249,10 @@ def main():
             reshaped_outputs = outputs.view(bs, -1).mean(dim=-1)
             normalized = m(reshaped_outputs.view(-1, 2))
             entropy = args.reg_coeff * torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
-            loss = outputs.mean()
-            #loss = loss_fct(reshaped_outputs.view(-1, 2), batch['labels'])
+            if args.supervised:
+                loss = -loss_fct(reshaped_outputs.view(-1, 2), batch['labels'])
+            else:
+                loss = outputs.mean()
             tot_loss = loss + entropy
             tot_loss.backward()
             if step % args.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
