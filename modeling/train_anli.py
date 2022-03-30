@@ -73,6 +73,7 @@ class DataCollatorForMultipleChoice:
             pad_to_multiple_of=self.pad_to_multiple_of,
             return_tensors="pt",
         )['input_ids']
+        batch_target[batch_target==1] = -100
 
         # Un-flatten
         #batch = {k: v.view(batch_size, num_choices, -1) for k, v in batch.items()}
@@ -150,7 +151,7 @@ def main():
                 outputs = model(input_ids=eval_batch["input_ids"], attention_mask=eval_batch["attention_mask"], labels=eval_batch["targets"]).loss
             outputs = outputs.view(bs, -1).mean(dim=-1)
             outputs = outputs.view(-1, 2)
-            predictions = outputs.argmax(dim=-1)
+            predictions = outputs.argmin(dim=-1)
             metric.add_batch(
                 predictions=predictions,
                 references=eval_batch["labels"],
@@ -191,7 +192,7 @@ def main():
         },
     ]
     optim = AdamW(optimizer_grouped_parameters, lr=args.learning_rate)
-    m = nn.Softmax(dim=0)
+    m = nn.Softmax(dim=-1)
     loss_fct = nn.CrossEntropyLoss()
 
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)

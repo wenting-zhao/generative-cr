@@ -5,7 +5,7 @@ from tqdm import tqdm
 import torch
 from transformers import AutoTokenizer
 from datasets import load_dataset
-from generation_example import all_relations
+#from generation_example import all_relations
 
 class Dataset(torch.utils.data.Dataset):
     def preprocess_function(self, examples, tokenizer, ending_names, baseline=False):
@@ -116,13 +116,16 @@ class AlphaNLIDataset(torch.utils.data.Dataset):
     def preprocess_function(self, examples, tokenizer, ending_names):
         premise = "obs1"
         first_sentences = [[f"{example[premise]} {example[end]}" for end in ending_names] for example in examples]
-        second_sentences = [[example["obs2"]] * len(ending_names) for example in examples]
+        second_sentences = [[example["obs2"]] for example in examples]
 
         first_sentences = sum(first_sentences, [])
         second_sentences = sum(second_sentences, [])
 
-        tokenized_examples = tokenizer(first_sentences, second_sentences, truncation=True)
-        return {k: [v[i:i+len(ending_names)] for i in range(0, len(v), len(ending_names))] for k, v in tokenized_examples.items()}
+        tokenized_sources = tokenizer(first_sentences, truncation=True)
+        tokenized_targets = tokenizer(second_sentences, truncation=True)
+        tokenized_sources = {k: [v[i:i+len(ending_names)] for i in range(0, len(v), len(ending_names))] for k, v in tokenized_sources.items()}
+        tokenized_targets = {k: [v[i] for i in range(len(v))] for k, v in tokenized_targets.items()}
+        return tokenized_sources, tokenized_targets
 
     def prepare(self, filename, path):
         print("preparing ", filename)
@@ -139,21 +142,22 @@ class AlphaNLIDataset(torch.utils.data.Dataset):
         if "train" in filename:
             if os.path.isfile(f"cache/anli_encodings.pkl"):
                 with open(f"cache/anli_encodings.pkl", 'rb') as f:
-                    features = pickle.load(f)
+                    features, targets = pickle.load(f)
             else:
-                features = self.preprocess_function(data, tokenizer, ending_names)
+                features, targets = self.preprocess_function(data, tokenizer, ending_names)
                 with open(f"cache/anli_encodings.pkl", 'wb') as f:
-                    pickle.dump(features, f)
+                    pickle.dump((features, targets), f)
         else:
-            features = self.preprocess_function(data, tokenizer, ending_names)
-        return features, labels
+            features, targets = self.preprocess_function(data, tokenizer, ending_names)
+        return features, targets, labels
 
     def __init__(self, filename, path):
-        self.encodings, self.labels = self.prepare(filename, path)
+        self.sources, self.targets, self.labels = self.prepare(filename, path)
 
     def __getitem__(self, idx):
-        item = {key: val[idx] for key, val in self.encodings.items()}
+        item = {key: val[idx] for key, val in self.sources.items()}
         item['labels'] = self.labels[idx]
+        item['targets'] = self.targets['input_ids'][idx]
         return item
 
     def __len__(self):
