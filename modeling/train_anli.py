@@ -10,11 +10,13 @@ from torch.utils.data import DataLoader
 from typing import Optional, Union
 from transformers.file_utils import PaddingStrategy
 from transformers import get_scheduler, set_seed
-from transformers import AutoTokenizer, PreTrainedTokenizerBase, BartForConditionalGeneration
+from transformers import AutoTokenizer, PreTrainedTokenizerBase
+from transformers import BartForConditionalGeneration, GPTNeoForCausalLM
 from transformers import AdamW, SchedulerType
 import numpy as np
 import math
 from tqdm import tqdm
+import sys
 wandb.login()
 
 @dataclass
@@ -73,7 +75,7 @@ class DataCollatorForMultipleChoice:
             pad_to_multiple_of=self.pad_to_multiple_of,
             return_tensors="pt",
         )['input_ids']
-        batch_target[batch_target==1] = -100
+        batch_target[batch_target==self.tokenizer.convert_tokens_to_ids(self.tokenizer.pad_token)] = -100
 
         # Un-flatten
         #batch = {k: v.view(batch_size, num_choices, -1) for k, v in batch.items()}
@@ -147,8 +149,15 @@ def main():
             bs = len(eval_batch['targets'])
             for key in eval_batch:
                 eval_batch[key] = eval_batch[key].to(device)
-            with torch.no_grad():
-                outputs = model(input_ids=eval_batch["input_ids"], attention_mask=eval_batch["attention_mask"], labels=eval_batch["targets"]).loss
+            if args.baseline:
+                concated = torch.cat((eval_batch["input_ids"], eval_batch["targets"]), dim=1)
+                concated_label = torch.cat((eval_batch["input_ids"], eval_batch["targets"]), dim=1)
+                concated_label[concated_label==model.config.pad_token_id] = -100
+                with torch.no_grad():
+                    outputs = model(input_ids=concated, labels=concated_label).loss
+            else:
+                with torch.no_grad():
+                    outputs = model(input_ids=eval_batch["input_ids"], attention_mask=eval_batch["attention_mask"], labels=eval_batch["targets"]).loss
             outputs = outputs.view(bs, -1).mean(dim=-1)
             outputs = outputs.view(-1, 2)
             predictions = outputs.argmin(dim=-1)
@@ -158,10 +167,11 @@ def main():
             )
 
         eval_metric = metric.compute()
-        if not args.nolog:
-            wandb.log({
-                "step": completed_steps,
-                f"{split} Acc": eval_metric})
+        if not args.baseline:
+            if not args.nolog:
+                wandb.log({
+                    "step": completed_steps,
+                    f"{split} Acc": eval_metric})
         return eval_metric['accuracy']
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     set_seed(555)
@@ -170,15 +180,25 @@ def main():
     train_dataset = AlphaNLIDataset(args.train_path, args.model_dir)
     eval_dataset = AlphaNLIDataset(args.valid_path, args.model_dir)
     test_dataset = AlphaNLIDataset(args.test_path, args.model_dir)
-    tokenizer = AutoTokenizer.from_pretrained(args.model_dir)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_dir, use_fast=True)
+    if args.baseline:
+        model = GPTNeoForCausalLM.from_pretrained(args.model_dir)
+    else:
+        model = BartForConditionalGeneration.from_pretrained(args.model_dir)
+    model = model.to(device)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+        model.config.pad_token_id = model.config.eos_token_id
 
     data_collator = DataCollatorForMultipleChoice(tokenizer, padding='longest')
     train_dataloader = DataLoader(train_dataset, shuffle=True, collate_fn=data_collator, batch_size=args.batch_size)
     eval_dataloader = DataLoader(eval_dataset, collate_fn=data_collator, batch_size=args.eval_batch_size)
     test_dataloader = DataLoader(test_dataset, collate_fn=data_collator, batch_size=args.eval_batch_size)
 
-    model = BartForConditionalGeneration.from_pretrained(args.model_dir)
-    model = model.to(device)
+    if args.baseline:
+        print("valid:", evaluate(eval_dataloader, "Valid"))
+        print("test:", evaluate(test_dataloader, "Test"))
+        sys.exit(0)
 
     no_decay = ["bias", "LayerNorm.weight"]
     optimizer_grouped_parameters = [
@@ -221,7 +241,6 @@ def main():
             if step % (500*args.gradient_accumulation_steps) == 0:
                 evaluate(eval_dataloader, "Valid")
                 evaluate(test_dataloader, "Test")
-
             bs = len(batch['targets'])
             for key in batch:
                 batch[key] = batch[key].to(device)
