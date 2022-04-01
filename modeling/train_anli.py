@@ -94,7 +94,7 @@ def get_args():
     parser.add_argument('--supervised', action='store_true')
     parser.add_argument('--sample', action='store_true')
     parser.add_argument('--nolog', action='store_true')
-    parser.add_argument("--minimum", default=0.62, type=float,
+    parser.add_argument("--minimum", default=0.0, type=float,
                         help="minimum acc to start run test.")
     parser.add_argument("--batch_size", '-b', default=1, type=int,
                         help="batch size per gpu.")
@@ -255,12 +255,16 @@ def main():
         wandb.config.lr = args.learning_rate
         wandb.watch(model)
 
+    best_valid = args.minimum
     for epoch in range(args.epoch):
         model.train()
         for step, batch in enumerate(train_dataloader):
             if step % (500*args.gradient_accumulation_steps) == 0:
-                evaluate(eval_dataloader, "Valid")
+                valid_acc = evaluate(eval_dataloader, "Valid")
                 evaluate(test_dataloader, "Test")
+                if valid_acc > best_valid:
+                    best_valid = valid_acc
+                    model.save_pretrained(f"{args.output_model_dir}/{run_name}")
             bs = len(batch['targets'])
             for key in batch:
                 batch[key] = batch[key].to(device)

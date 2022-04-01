@@ -124,6 +124,11 @@ class AlphaNLIDataset(torch.utils.data.Dataset):
             for example in examples:
                 correct = example[ending_names[0]] if example['label'] == 0 else example[ending_names[1]]
                 first_sentences.append([f"{example[premise]} {correct}"])
+        elif option == 3:
+            first_sentences = []
+            for example in examples:
+                correct = example[ending_names[1]] if example['label'] == 0 else example[ending_names[0]]
+                first_sentences.append([f"{example[premise]} {correct}"])
         second_sentences = [[example["obs2"]] for example in examples]
 
         first_sentences = sum(first_sentences, [])
