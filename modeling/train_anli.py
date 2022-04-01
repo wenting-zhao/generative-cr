@@ -49,13 +49,13 @@ class DataCollatorForMultipleChoice:
     pad_to_multiple_of: Optional[int] = None
 
     def __call__(self, features):
-        label_name = "label" if "label" in features[0].keys() else "labels"
-        labels = [feature.pop(label_name) for feature in features]
-        targets = [[feature.pop("targets")] * 2 for feature in features]
-        targets = list(chain(*targets))
-        targets = [{"input_ids": x} for x in targets]
         batch_size = len(features)
         num_choices = len(features[0]["input_ids"])
+        label_name = "label" if "label" in features[0].keys() else "labels"
+        labels = [feature.pop(label_name) for feature in features]
+        targets = [[feature.pop("targets")] * num_choices for feature in features]
+        targets = list(chain(*targets))
+        targets = [{"input_ids": x} for x in targets]
         flattened_features = [
             [{k: v[i] for k, v in feature.items()} for i in range(num_choices)] for feature in features
         ]
@@ -89,8 +89,10 @@ def get_args():
     parser.add_argument("--train_path", type=str, required=True)
     parser.add_argument("--valid_path", type=str, required=True)
     parser.add_argument("--test_path", type=str)
+    parser.add_argument("--option", type=int, default=0)
     parser.add_argument('--baseline', action='store_true')
     parser.add_argument('--supervised', action='store_true')
+    parser.add_argument('--sample', action='store_true')
     parser.add_argument('--nolog', action='store_true')
     parser.add_argument("--minimum", default=0.62, type=float,
                         help="minimum acc to start run test.")
@@ -137,15 +139,12 @@ def get_args():
     args = parser.parse_args()
     return args
 
-def compute_metrics(eval_predictions):
-        predictions, label_ids = eval_predictions
-        preds = np.argmax(predictions, axis=1)
-        return {"accuracy": (preds == label_ids).astype(np.float32).mean().item()}
-
 def main():
     metric = load_metric("accuracy")
     def evaluate(dataloader, split):
         model.eval()
+        if args.sample:
+            out = []
         for step, eval_batch in enumerate(dataloader):
             bs = len(eval_batch['targets'])
             for key in eval_batch:
@@ -159,28 +158,37 @@ def main():
             else:
                 with torch.no_grad():
                     outputs = model(input_ids=eval_batch["input_ids"], attention_mask=eval_batch["attention_mask"], labels=eval_batch["targets"]).loss
-            outputs = outputs.view(bs, -1).mean(dim=-1)
-            outputs = outputs.view(-1, 2)
-            predictions = outputs.argmin(dim=-1)
-            metric.add_batch(
-                predictions=predictions,
-                references=eval_batch["labels"],
-            )
-
-        eval_metric = metric.compute()
+            if args.option == 0:
+                outputs = outputs.view(bs, -1).mean(dim=-1)
+                outputs = outputs.view(-1, 2)
+                predictions = outputs.argmin(dim=-1)
+                metric.add_batch(
+                    predictions=predictions,
+                    references=eval_batch["labels"],
+                )
+                if args.sample:
+                    out.append(outputs.cpu())
+        if args.sample:
+            torch.save(torch.cat(out, dim=0), f"logging/{run_name}|step-{completed_steps}.pt")
+        if args.option == 0:
+            eval_metric = metric.compute()
+        else:
+            eval_metric = {'accuracy': 0}
         if not args.baseline:
             if not args.nolog:
                 wandb.log({
                     "step": completed_steps,
+                    f"{split} Loss": outputs.mean(),
                     f"{split} Acc": eval_metric})
         return eval_metric['accuracy']
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     set_seed(555)
 
     args = get_args()
-    train_dataset = AlphaNLIDataset(args.train_path, args.model_dir)
-    eval_dataset = AlphaNLIDataset(args.valid_path, args.model_dir)
-    test_dataset = AlphaNLIDataset(args.test_path, args.model_dir)
+    train_dataset = AlphaNLIDataset(args.train_path, args.model_dir, args.option)
+    eval_dataset = AlphaNLIDataset(args.valid_path, args.model_dir, args.option)
+    test_dataset = AlphaNLIDataset(args.test_path, args.model_dir, args.option)
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir, use_fast=True)
     if args.baseline:
         model = GPTNeoForCausalLM.from_pretrained(args.model_dir)
@@ -195,6 +203,12 @@ def main():
     train_dataloader = DataLoader(train_dataset, shuffle=True, collate_fn=data_collator, batch_size=args.batch_size)
     eval_dataloader = DataLoader(eval_dataset, collate_fn=data_collator, batch_size=args.eval_batch_size)
     test_dataloader = DataLoader(test_dataset, collate_fn=data_collator, batch_size=args.eval_batch_size)
+
+    model_name = args.model_dir.split('/')[-1]
+    if args.supervised:
+        run_name=f'supervised-model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff}'
+    else:
+        run_name=f'model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff} option-{args.option}'
 
     if args.baseline:
         print("valid:", evaluate(eval_dataloader, "Valid"))
@@ -231,11 +245,11 @@ def main():
 
     if not args.nolog:
         if args.supervised:
-            wandb.init(name=f'supervised-model-{args.model_dir} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff}',
+            wandb.init(name=run_name,
                    project='generative aNLI',
                    tags=['anli'])
         else:
-            wandb.init(name=f'model-{args.model_dir} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff}',
+            wandb.init(name=run_name,
                    project='generative aNLI',
                    tags=['anli'])
         wandb.config.lr = args.learning_rate

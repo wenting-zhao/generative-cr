@@ -113,9 +113,17 @@ class Dataset(torch.utils.data.Dataset):
         return len(self.labels)
 
 class AlphaNLIDataset(torch.utils.data.Dataset):
-    def preprocess_function(self, examples, tokenizer, ending_names):
+    def preprocess_function(self, examples, tokenizer, ending_names, option):
         premise = "obs1"
-        first_sentences = [[f"{example[premise]} {example[end]}" for end in ending_names] for example in examples]
+        if option == 0:
+            first_sentences = [[f"{example[premise]} {example[end]}" for end in ending_names] for example in examples]
+        elif option == 1:
+            first_sentences = [[f"{example[premise]}"] for example in examples]
+        elif option == 2:
+            first_sentences = []
+            for example in examples:
+                correct = example[ending_names[0]] if example['label'] == 0 else example[ending_names[1]]
+                first_sentences.append([f"{example[premise]} {correct}"])
         second_sentences = [[example["obs2"]] for example in examples]
 
         first_sentences = sum(first_sentences, [])
@@ -123,11 +131,12 @@ class AlphaNLIDataset(torch.utils.data.Dataset):
 
         tokenized_sources = tokenizer(first_sentences, truncation=True)
         tokenized_targets = tokenizer(second_sentences, truncation=True)
-        tokenized_sources = {k: [v[i:i+len(ending_names)] for i in range(0, len(v), len(ending_names))] for k, v in tokenized_sources.items()}
+        length = 1 if option > 0 else len(ending_names)
+        tokenized_sources = {k: [v[i:i+length] for i in range(0, len(v), length)] for k, v in tokenized_sources.items()}
         tokenized_targets = {k: [v[i] for i in range(len(v))] for k, v in tokenized_targets.items()}
         return tokenized_sources, tokenized_targets
 
-    def prepare(self, filename, path):
+    def prepare(self, filename, path, option):
         print("preparing ", filename)
         tokenizer = AutoTokenizer.from_pretrained(path, use_fast=True)
         ending_names = ["hyp1", "hyp2"]
@@ -139,20 +148,22 @@ class AlphaNLIDataset(torch.utils.data.Dataset):
         with open(filename.replace(".jsonl", "-labels.lst"), 'r') as fin:
             for idx, line in enumerate(fin):
                 labels.append(int(line) - 1)
+                data[idx]['label'] = labels[-1]
+
         if "train" in filename:
-            if os.path.isfile(f"cache/anli_encodings.pkl"):
-                with open(f"cache/anli_encodings.pkl", 'rb') as f:
+            if os.path.isfile(f"cache/anli_encodings_{option}.pkl"):
+                with open(f"cache/anli_encodings_{option}.pkl", 'rb') as f:
                     features, targets = pickle.load(f)
             else:
-                features, targets = self.preprocess_function(data, tokenizer, ending_names)
-                with open(f"cache/anli_encodings.pkl", 'wb') as f:
+                features, targets = self.preprocess_function(data, tokenizer, ending_names, option)
+                with open(f"cache/anli_encodings_{option}.pkl", 'wb') as f:
                     pickle.dump((features, targets), f)
         else:
-            features, targets = self.preprocess_function(data, tokenizer, ending_names)
+            features, targets = self.preprocess_function(data, tokenizer, ending_names, option)
         return features, targets, labels
 
-    def __init__(self, filename, path):
-        self.sources, self.targets, self.labels = self.prepare(filename, path)
+    def __init__(self, filename, path, option):
+        self.sources, self.targets, self.labels = self.prepare(filename, path, option)
 
     def __getitem__(self, idx):
         item = {key: val[idx] for key, val in self.sources.items()}
