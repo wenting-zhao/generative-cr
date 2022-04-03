@@ -94,8 +94,7 @@ def get_args():
     parser.add_argument('--supervised', action='store_true')
     parser.add_argument('--sample', action='store_true')
     parser.add_argument('--nolog', action='store_true')
-    parser.add_argument("--minimum", default=0.0, type=float,
-                        help="minimum acc to start run test.")
+    parser.add_argument('--mask_e', action='store_true')
     parser.add_argument("--batch_size", '-b', default=1, type=int,
                         help="batch size per gpu.")
     parser.add_argument("--eval_batch_size", default=32, type=int,
@@ -107,6 +106,8 @@ def get_args():
     parser.add_argument("--num_cst", default=51, type=int,
                         help="The number of commonsense triplets.")
     parser.add_argument("--model_dir", default="roberta-large", type=str,
+                        help="The directory where the pretrained model will be loaded.")
+    parser.add_argument("--last_checkpoint", default="", type=str,
                         help="The directory where the pretrained model will be loaded.")
     parser.add_argument("--output_model_dir", default="./saved_models", type=str,
                         help="The directory where the pretrained model will be saved.")
@@ -137,6 +138,8 @@ def get_args():
     )
 
     args = parser.parse_args()
+    if args.last_checkpoint == "":
+        args.last_checkpoint = args.model_dir
     return args
 
 def main():
@@ -173,7 +176,7 @@ def main():
         if args.option == 0:
             eval_metric = metric.compute()
         else:
-            eval_metric = {'accuracy': 0}
+            eval_metric = {'accuracy': -outputs.mean()}
         if not args.baseline:
             if not args.nolog:
                 wandb.log({
@@ -186,14 +189,14 @@ def main():
     set_seed(555)
 
     args = get_args()
-    train_dataset = AlphaNLIDataset(args.train_path, args.model_dir, args.option)
-    eval_dataset = AlphaNLIDataset(args.valid_path, args.model_dir, args.option)
-    test_dataset = AlphaNLIDataset(args.test_path, args.model_dir, args.option)
+    train_dataset = AlphaNLIDataset(args.train_path, args.model_dir, args.option, args.mask_e)
+    eval_dataset = AlphaNLIDataset(args.valid_path, args.model_dir, args.option, args.mask_e)
+    test_dataset = AlphaNLIDataset(args.test_path, args.model_dir, args.option, args.mask_e)
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir, use_fast=True)
     if args.baseline:
         model = GPTNeoForCausalLM.from_pretrained(args.model_dir)
     else:
-        model = BartForConditionalGeneration.from_pretrained(args.model_dir)
+        model = BartForConditionalGeneration.from_pretrained(args.last_checkpoint)
     model = model.to(device)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -207,6 +210,8 @@ def main():
     model_name = args.model_dir.split('/')[-1]
     if args.supervised:
         run_name=f'supervised-model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff}'
+    elif args.mask_e:
+        run_name=f'model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff} option-{args.option}-maskede'
     else:
         run_name=f'model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff} option-{args.option}'
 
@@ -255,7 +260,7 @@ def main():
         wandb.config.lr = args.learning_rate
         wandb.watch(model)
 
-    best_valid = args.minimum
+    best_valid = float('-inf')
     for epoch in range(args.epoch):
         model.train()
         for step, batch in enumerate(train_dataloader):

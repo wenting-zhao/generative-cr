@@ -119,12 +119,12 @@ class AlphaNLIDataset(torch.utils.data.Dataset):
             first_sentences = [[f"{example[premise]} {example[end]}" for end in ending_names] for example in examples]
         elif option == 1:
             first_sentences = [[f"{example[premise]}"] for example in examples]
-        elif option == 2:
+        elif option == 2 or option == 4:
             first_sentences = []
             for example in examples:
                 correct = example[ending_names[0]] if example['label'] == 0 else example[ending_names[1]]
                 first_sentences.append([f"{example[premise]} {correct}"])
-        elif option == 3:
+        elif option == 3 or option == 5:
             first_sentences = []
             for example in examples:
                 correct = example[ending_names[1]] if example['label'] == 0 else example[ending_names[0]]
@@ -141,7 +141,7 @@ class AlphaNLIDataset(torch.utils.data.Dataset):
         tokenized_targets = {k: [v[i] for i in range(len(v))] for k, v in tokenized_targets.items()}
         return tokenized_sources, tokenized_targets
 
-    def prepare(self, filename, path, option):
+    def prepare(self, filename, path, option, mask_e):
         print("preparing ", filename)
         tokenizer = AutoTokenizer.from_pretrained(path, use_fast=True)
         ending_names = ["hyp1", "hyp2"]
@@ -165,10 +165,24 @@ class AlphaNLIDataset(torch.utils.data.Dataset):
                     pickle.dump((features, targets), f)
         else:
             features, targets = self.preprocess_function(data, tokenizer, ending_names, option)
+        if (option == 2 or option == 3) and mask_e:
+            print("masking explanations entirely.")
+            ids = tokenizer.convert_tokens_to_ids('.')
+            for i in range(len(features['input_ids'])):
+                try:
+                    #print(i, features['input_ids'][i][0])
+                    start = features['input_ids'][i][0].index(ids)
+                    end = len(features['input_ids'][i][0]) - 2
+                    features['input_ids'][i][0][start+1:end+1] = [tokenizer.mask_token_id] * (end-start)
+                    #print(features['input_ids'][i][0])
+                except ValueError:
+                    # there isn't a period ending obs1
+                    print("!!!!!!!!!!!!!!!")
+                    pass
         return features, targets, labels
 
-    def __init__(self, filename, path, option):
-        self.sources, self.targets, self.labels = self.prepare(filename, path, option)
+    def __init__(self, filename, path, option, mask_e=False):
+        self.sources, self.targets, self.labels = self.prepare(filename, path, option, mask_e)
 
     def __getitem__(self, idx):
         item = {key: val[idx] for key, val in self.sources.items()}
