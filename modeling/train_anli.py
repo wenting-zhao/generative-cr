@@ -95,6 +95,7 @@ def get_args():
     parser.add_argument('--sample', action='store_true')
     parser.add_argument('--nolog', action='store_true')
     parser.add_argument('--mask_e', action='store_true')
+    parser.add_argument('--save_model', action='store_true')
     parser.add_argument("--batch_size", '-b', default=1, type=int,
                         help="batch size per gpu.")
     parser.add_argument("--eval_batch_size", default=32, type=int,
@@ -146,6 +147,7 @@ def main():
     metric = load_metric("accuracy")
     def evaluate(dataloader, split):
         model.eval()
+        ents = []
         if args.sample:
             out = []
         for step, eval_batch in enumerate(dataloader):
@@ -164,6 +166,9 @@ def main():
             if args.option == 0:
                 outputs = outputs.view(bs, -1).mean(dim=-1)
                 outputs = outputs.view(-1, 2)
+                normalized = m(outputs)
+                entropy = torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
+                ents.append(entropy.cpu().item())
                 predictions = outputs.argmin(dim=-1)
                 metric.add_batch(
                     predictions=predictions,
@@ -182,6 +187,7 @@ def main():
                 wandb.log({
                     "step": completed_steps,
                     f"{split} Loss": outputs.mean(),
+                    f"{split} Reg": np.mean(ents),
                     f"{split} Acc": eval_metric})
         return eval_metric['accuracy']
 
@@ -237,6 +243,7 @@ def main():
 
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     args.max_train_steps = args.epoch * num_update_steps_per_epoch
+    step_size = 1 / args.max_train_steps
     total_batch_size = args.batch_size * args.gradient_accumulation_steps
     lr_scheduler = get_scheduler(
         name=args.lr_scheduler_type,
@@ -269,7 +276,8 @@ def main():
                 evaluate(test_dataloader, "Test")
                 if valid_acc > best_valid:
                     best_valid = valid_acc
-                    model.save_pretrained(f"{args.output_model_dir}/{run_name}")
+                    if args.save_model:
+                        model.save_pretrained(f"{args.output_model_dir}/{run_name}")
             bs = len(batch['targets'])
             for key in batch:
                 batch[key] = batch[key].to(device)
@@ -277,6 +285,7 @@ def main():
             reshaped_outputs = outputs.view(bs, -1).mean(dim=-1)
             normalized = m(reshaped_outputs.view(-1, 2))
             entropy = args.reg_coeff * torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
+            args.reg_coeff -= step_size
             if args.supervised:
                 loss = -loss_fct(reshaped_outputs.view(-1, 2), batch['labels'])
             else:

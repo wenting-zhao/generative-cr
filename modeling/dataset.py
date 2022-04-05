@@ -5,7 +5,7 @@ from tqdm import tqdm
 import torch
 from transformers import AutoTokenizer
 from datasets import load_dataset
-#from generation_example import all_relations
+from generation_example import all_relations
 
 class Dataset(torch.utils.data.Dataset):
     def preprocess_function(self, examples, tokenizer, ending_names, baseline=False):
@@ -43,8 +43,8 @@ class Dataset(torch.utils.data.Dataset):
 
     def prepare(self, filename, split, path, baseline=False):
         print("preparing ", filename)
-        #ending_names = ["answerA", "answerB", "answerC"]
-        ending_names = ["answer0", "answer1", "answer2", "answer3"]
+        ending_names = ["answerA", "answerB", "answerC"]
+        #ending_names = ["answer0", "answer1", "answer2", "answer3"]
         data = []
         with open(filename, 'r') as fin:
             for line in fin:
@@ -88,15 +88,15 @@ class Dataset(torch.utils.data.Dataset):
         labels = []
         for item in data:
             # socialIQA
-            #label = item['correct']
-            #if label == 'A':
-            #    labels.append(0)
-            #elif label == 'B':
-            #    labels.append(1)
-            #elif label == 'C':
-            #    labels.append(2)
+            label = item['correct']
+            if label == 'A':
+                labels.append(0)
+            elif label == 'B':
+                labels.append(1)
+            elif label == 'C':
+                labels.append(2)
             # COSMOSQA
-            labels.append(int(item['label']))
+            #labels.append(int(item['label']))
         #torch.save(data, "test_data.pt")
         return features, labels
 
@@ -154,6 +154,14 @@ class AlphaNLIDataset(torch.utils.data.Dataset):
             for idx, line in enumerate(fin):
                 labels.append(int(line) - 1)
                 data[idx]['label'] = labels[-1]
+        #dedup_data, dedup_labels = [], []
+        #obs1ss = []
+        #for d, label in zip(data, labels):
+        #    if d['obs1'] not in obs1ss:
+        #        obs1ss.append(d['obs1'])
+        #        dedup_data.append(d)
+        #        dedup_labels.append(label)
+        #data, labels = dedup_data, dedup_labels
 
         if "train" in filename:
             if os.path.isfile(f"cache/anli_encodings_{option}.pkl"):

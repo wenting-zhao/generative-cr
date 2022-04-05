@@ -119,13 +119,13 @@ def main():
     args = get_args()
     train_dataset = Dataset(args.train_path, 'train', args.model_dir, args.baseline)
     eval_dataset = Dataset(args.valid_path, 'dev', args.model_dir, args.baseline)
-    #test_dataset = Dataset(args.test_path, 'test', args.model_dir, args.baseline)
+    test_dataset = Dataset(args.test_path, 'test', args.model_dir, args.baseline)
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir)
 
     data_collator = DataCollatorForMultipleChoice(tokenizer, padding='longest')
     train_dataloader = DataLoader(train_dataset, shuffle=True, collate_fn=data_collator, batch_size=args.batch_size)
     eval_dataloader = DataLoader(eval_dataset, collate_fn=data_collator, batch_size=args.eval_batch_size)
-    #test_dataloader = DataLoader(test_dataset, collate_fn=data_collator, batch_size=args.eval_batch_size)
+    test_dataloader = DataLoader(test_dataset, collate_fn=data_collator, batch_size=args.eval_batch_size)
 
     def get_model_optim():
         model = AutoModel.from_pretrained(args.model_dir)
@@ -220,9 +220,10 @@ def main():
     name = "baseline" if args.baseline else "generative"
     if not args.nolog:
         wandb.init(name=f'{name} training (joint): model-{args.model_dir} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} l2-{args.weight_decay}',
-               project='generative cr cosmosQA',
-               #tags=['SocialIQA'])
-               tags=['cosmosQA'])
+               project='generative cr',
+               #project='generative cr cosmosQA',
+               tags=['SocialIQA'])
+               #tags=['cosmosQA'])
         wandb.config.lr = args.learning_rate
         wandb.watch(model_a)
         #if not args.baseline:
@@ -312,14 +313,14 @@ def main():
 
             if step % (500*args.gradient_accumulation_steps) == 0:
                 acc = evaluate(eval_dataloader, "Valid")
-                #if acc > best_valid and acc > args.minimum:
-                #    evaluate(test_dataloader, "Test")
-                #    best_valid = acc
-                #    model_a.save_pretrained(f"{args.output_model_dir}_a")
-                #    torch.save(classifier_a, f"{args.output_model_dir}_a/classifier.pt")
-                    #if not args.baseline:
-                    #    model_r.save_pretrained(f"{args.output_model_dir}_r")
-                    #    torch.save(classifier_r, f"{args.output_model_dir}_r/classifier.pt")
+                if acc > best_valid and acc > args.minimum:
+                    evaluate(test_dataloader, "Test")
+                    best_valid = acc
+                    model_a.save_pretrained(f"{args.output_model_dir}_a")
+                    torch.save(classifier_a, f"{args.output_model_dir}_a/classifier.pt")
+                    if not args.baseline:
+                        model_r.save_pretrained(f"{args.output_model_dir}_r")
+                        torch.save(classifier_r, f"{args.output_model_dir}_r/classifier.pt")
 
 if __name__ == '__main__':
     main()
