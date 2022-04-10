@@ -256,14 +256,9 @@ def main():
     completed_steps = 0
 
     if not args.nolog:
-        if args.supervised:
-            wandb.init(name=run_name,
-                   project='generative aNLI',
-                   tags=['anli'])
-        else:
-            wandb.init(name=run_name,
-                   project='generative aNLI',
-                   tags=['anli'])
+        wandb.init(name=run_name,
+               project='generative aNLI',
+               tags=['anli'])
         wandb.config.lr = args.learning_rate
         wandb.watch(model)
 
