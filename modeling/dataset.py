@@ -1,3 +1,4 @@
+import csv
 import json
 import pickle
 import os
@@ -191,6 +192,66 @@ class AlphaNLIDataset(torch.utils.data.Dataset):
 
     def __init__(self, filename, path, option, mask_e=False):
         self.sources, self.targets, self.labels = self.prepare(filename, path, option, mask_e)
+
+    def __getitem__(self, idx):
+        item = {key: val[idx] for key, val in self.sources.items()}
+        item['labels'] = self.labels[idx]
+        item['targets'] = self.targets['input_ids'][idx]
+        return item
+
+    def __len__(self):
+        return len(self.labels)
+
+
+class SenMakingDataset(torch.utils.data.Dataset):
+    def preprocess_function(self, examples, tokenizer, ending_names):
+        first_sentences = [[f"Because {example[end][:-1]}," for end in ending_names] for example in examples]
+        obs = "FalseSent"
+        second_sentences = [[f"it's unlikely that {example[obs]}"] for example in examples]
+
+        first_sentences = sum(first_sentences, [])
+        second_sentences = sum(second_sentences, [])
+        print(first_sentences[:9])
+        print(second_sentences[:3])
+
+        tokenized_sources = tokenizer(first_sentences, truncation=True)
+        tokenized_targets = tokenizer(second_sentences, truncation=True)
+        length = len(ending_names)
+        tokenized_sources = {k: [v[i:i+length] for i in range(0, len(v), length)] for k, v in tokenized_sources.items()}
+        tokenized_targets = {k: [v[i] for i in range(len(v))] for k, v in tokenized_targets.items()}
+        return tokenized_sources, tokenized_targets
+
+    def prepare(self, filename, path):
+        print("preparing ", filename)
+        tokenizer = AutoTokenizer.from_pretrained(path, use_fast=True)
+        ending_names = ["OptionA", "OptionB", "OptionC"]
+        data = []
+        labels = []
+        with open(filename, newline='') as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                data.append(row)
+        with open(filename.replace(".csv", "_label.csv"), 'r') as fin:
+            letter2num = {"A": 0, "B": 1, "C": 2}
+            for idx, line in enumerate(fin):
+                tmp = line.split(',')[-1].strip()
+                labels.append(letter2num[tmp])
+                data[idx]['label'] = labels[-1]
+
+        if "train" in filename:
+            if os.path.isfile(f"cache/sen_encodings.pkl"):
+                with open(f"cache/sen_encodings.pkl", 'rb') as f:
+                    features, targets = pickle.load(f)
+            else:
+                features, targets = self.preprocess_function(data, tokenizer, ending_names)
+                with open(f"cache/sen_encodings.pkl", 'wb') as f:
+                    pickle.dump((features, targets), f)
+        else:
+            features, targets = self.preprocess_function(data, tokenizer, ending_names)
+        return features, targets, labels
+
+    def __init__(self, filename, path):
+        self.sources, self.targets, self.labels = self.prepare(filename, path)
 
     def __getitem__(self, idx):
         item = {key: val[idx] for key, val in self.sources.items()}
