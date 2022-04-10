@@ -89,12 +89,10 @@ def get_args():
     parser.add_argument("--train_path", type=str, required=True)
     parser.add_argument("--valid_path", type=str, required=True)
     parser.add_argument("--test_path", type=str)
-    parser.add_argument("--option", type=int, default=0)
     parser.add_argument('--baseline', action='store_true')
     parser.add_argument('--supervised', action='store_true')
     parser.add_argument('--sample', action='store_true')
     parser.add_argument('--nolog', action='store_true')
-    parser.add_argument('--mask_e', action='store_true')
     parser.add_argument('--save_model', action='store_true')
     parser.add_argument("--batch_size", '-b', default=1, type=int,
                         help="batch size per gpu.")
@@ -212,10 +210,8 @@ def main():
     model_name = args.model_dir.split('/')[-1]
     if args.supervised:
         run_name=f'supervised-model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff}'
-    elif args.mask_e:
-        run_name=f'model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff} option-{args.option}-maskede'
     else:
-        run_name=f'model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff} option-{args.option}'
+        run_name=f'model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff}'
 
     if args.baseline:
         print("valid:", evaluate(eval_dataloader, "Valid"))
@@ -239,7 +235,7 @@ def main():
 
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     args.max_train_steps = args.epoch * num_update_steps_per_epoch
-    step_size = 1 / args.max_train_steps
+    step_size = args.reg_coeff / args.max_train_steps
     total_batch_size = args.batch_size * args.gradient_accumulation_steps
     lr_scheduler = get_scheduler(
         name=args.lr_scheduler_type,

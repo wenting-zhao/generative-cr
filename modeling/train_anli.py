@@ -243,7 +243,7 @@ def main():
 
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     args.max_train_steps = args.epoch * num_update_steps_per_epoch
-    step_size = 1 / args.max_train_steps
+    step_size = args.reg_coeff / args.max_train_steps
     total_batch_size = args.batch_size * args.gradient_accumulation_steps
     lr_scheduler = get_scheduler(
         name=args.lr_scheduler_type,
