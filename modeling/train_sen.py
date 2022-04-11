@@ -201,6 +201,7 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         model.config.pad_token_id = model.config.eos_token_id
+    m = nn.Softmax(dim=-1)
 
     data_collator = DataCollatorForMultipleChoice(tokenizer, padding='longest')
     train_dataloader = DataLoader(train_dataset, shuffle=True, collate_fn=data_collator, batch_size=args.batch_size)
@@ -230,7 +231,6 @@ def main():
         },
     ]
     optim = AdamW(optimizer_grouped_parameters, lr=args.learning_rate)
-    m = nn.Softmax(dim=-1)
     loss_fct = nn.CrossEntropyLoss()
 
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
