@@ -211,7 +211,7 @@ def main():
     if args.supervised:
         run_name=f'supervised-model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff}'
     else:
-        run_name=f'model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff}'
+        run_name=f'model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff} warmup-{args.warmup_ratio} wd-{args.weight_decay}'
 
     if args.baseline:
         print("valid:", evaluate(eval_dataloader, "Valid"))
