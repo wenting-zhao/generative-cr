@@ -211,8 +211,6 @@ class SenMakingDataset(torch.utils.data.Dataset):
 
         first_sentences = sum(first_sentences, [])
         second_sentences = sum(second_sentences, [])
-        print(first_sentences[:9])
-        print(second_sentences[:3])
 
         tokenized_sources = tokenizer(first_sentences, truncation=True)
         tokenized_targets = tokenizer(second_sentences, truncation=True)
