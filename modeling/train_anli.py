@@ -95,6 +95,7 @@ def get_args():
     parser.add_argument('--sample', action='store_true')
     parser.add_argument('--nolog', action='store_true')
     parser.add_argument('--mask_e', action='store_true')
+    parser.add_argument('--viterbi_em', action='store_true')
     parser.add_argument('--save_model', action='store_true')
     parser.add_argument("--batch_size", '-b', default=1, type=int,
                         help="batch size per gpu.")
@@ -218,6 +219,8 @@ def main():
         run_name=f'supervised-model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff}'
     elif args.mask_e:
         run_name=f'model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff} option-{args.option}-maskede'
+    elif args.viterbi_em:
+        run_name=f'model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff} option-{args.option}-viterbi'
     else:
         run_name=f'model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff} option-{args.option}'
 
@@ -277,14 +280,18 @@ def main():
             for key in batch:
                 batch[key] = batch[key].to(device)
             outputs = model(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"], labels=batch['targets']).loss
-            reshaped_outputs = outputs.view(bs, -1).mean(dim=-1)
-            normalized = m(reshaped_outputs.view(-1, 2))
+            reshaped_outputs = outputs.view(bs, -1).mean(dim=-1).view(-1, 2)
+            normalized = m(reshaped_outputs)
             entropy = args.reg_coeff * torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
             args.reg_coeff -= step_size
             if args.supervised:
                 loss = -loss_fct(reshaped_outputs.view(-1, 2), batch['labels'])
             else:
-                loss = outputs.mean()
+                if args.viterbi_em:
+                    loss = reshaped_outputs.min(dim=-1).values
+                    loss = loss.mean()
+                else:
+                    loss = outputs.mean()
             tot_loss = loss + entropy
             tot_loss.backward()
             if step % args.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
