@@ -2,11 +2,12 @@ import csv
 import json
 import pickle
 import os
+from itertools import groupby
 from tqdm import tqdm
 import torch
 from transformers import AutoTokenizer
 from datasets import load_dataset
-from generation_example import all_relations
+#from generation_example import all_relations
 
 class Dataset(torch.utils.data.Dataset):
     def preprocess_function(self, examples, tokenizer, ending_names, baseline=False):
@@ -207,7 +208,7 @@ class SenMakingDataset(torch.utils.data.Dataset):
     def preprocess_function(self, examples, tokenizer, ending_names):
         first_sentences = [[f"Because {example[end][:-1]}," for end in ending_names] for example in examples]
         obs = "FalseSent"
-        second_sentences = [[f"it's unlikely that {example[obs]}"] for example in examples]
+        second_sentences = [[f"it's not true that {example[obs]}"] for example in examples]
 
         first_sentences = sum(first_sentences, [])
         second_sentences = sum(second_sentences, [])
@@ -255,6 +256,94 @@ class SenMakingDataset(torch.utils.data.Dataset):
         item = {key: val[idx] for key, val in self.sources.items()}
         item['labels'] = self.labels[idx]
         item['targets'] = self.targets['input_ids'][idx]
+        return item
+
+    def __len__(self):
+        return len(self.labels)
+
+
+class DeltaNLIDataset(torch.utils.data.Dataset):
+    def preprocess_function(self, examples, tokenizer, ending_names, option):
+        if option == "social":
+            premise = "SocialChemROT"
+        else:
+            premise = "Premise"
+        first_sentences = [[f"{example[premise]} {tokenizer.sep_token} {end}" 
+             for end in example[ending_names[0]]+example[ending_names[1]]] for example in examples]
+        second_sentences = [[example["Hypothesis"]] for example in examples]
+        third_sentences = [[example[premise]] for example in examples]
+        fourth_sentences = [[f"{end}" for end in example[ending_names[0]]+example[ending_names[1]]] for example in examples]
+
+        first_sentences = sum(first_sentences, [])
+        second_sentences = sum(second_sentences, [])
+        third_sentences = sum(third_sentences, [])
+        fourth_sentences = sum(fourth_sentences, [])
+
+        tokenized_sources = tokenizer(first_sentences, truncation=True)
+        tokenized_targets = tokenizer(second_sentences, truncation=True)
+        tokenized_sources2 = tokenizer(third_sentences, truncation=True)
+        tokenized_targets2 = tokenizer(fourth_sentences, truncation=True)
+        lengths = [0]
+        for e in examples:
+            lengths.append(lengths[-1]+len(e[ending_names[0]]+e[ending_names[1]]))
+        tokenized_sources = {k: [v[lengths[i]:lengths[i+1]] for i in range(len(lengths)-1)] for k, v in tokenized_sources.items()}
+        tokenized_targets = {k: [v[i] for i in range(len(v))] for k, v in tokenized_targets.items()}
+        tokenized_sources2 = {k: [v[i] for i in range(len(v))] for k, v in tokenized_sources2.items()}
+        tokenized_targets2 = {k: [v[lengths[i]:lengths[i+1]] for i in range(len(lengths)-1)] for k, v in tokenized_targets2.items()}
+        return tokenized_sources, tokenized_targets, tokenized_sources2, tokenized_targets2
+    
+    def prepare(self, filename, path, option):
+        print("preparing ", filename)
+        if option == "social":
+            premise = "SocialChemROT"
+        else:
+            premise = "Premise"
+        ending_names = ["strengtheners", "weakeners"]
+        tokenizer = AutoTokenizer.from_pretrained(path, use_fast=True)
+        ori_data = []
+        labels = []
+        with open(filename, 'r') as fin:
+            for line in fin:
+                ori_data.append(json.loads(line))
+        ori_data = groupby(ori_data, key=lambda d: d[premise]+d["Hypothesis"])
+        data = []
+        for _, v in ori_data:
+            v = list(v)
+            data_i = dict()
+            data_i[premise] = v[0][premise]
+            data_i["Hypothesis"] = v[0]["Hypothesis"]
+            data_i["strengtheners"] = []
+            data_i["weakeners"] = []
+            for vi in v:
+                if vi["UpdateType"] == "strengthener":
+                    data_i["strengtheners"].append(vi["Update"])
+                else:
+                    data_i["weakeners"].append(vi["Update"])
+            data_i['labels'] = len(data_i["strengtheners"]) * [0] + len(data_i["weakeners"]) * [1]
+            assert len(data_i["strengtheners"]) == len(data_i["weakeners"])
+            data.append(data_i)
+        if "train" in filename:
+            if os.path.isfile(f"cache/dnli_encodings_{option}.pkl"):
+                with open(f"cache/dnli_encodings_{option}.pkl", 'rb') as f:
+                    features, targets, features2, targets2 = pickle.load(f)
+            else:
+                features, targets, features2, targets2 = self.preprocess_function(data, tokenizer, ending_names, option)
+                with open(f"cache/dnli_encodings_{option}.pkl", 'wb') as f:
+                    pickle.dump((features, targets, features2, targets2), f)
+        else:
+            features, targets, features2, targets2 = self.preprocess_function(data, tokenizer, ending_names, option)
+        labels = [d['labels'] for d in data]
+        return features, targets, features2, targets2, labels
+
+    def __init__(self, filename, path, option):
+        self.sources, self.targets, self.features2, self.targets2, self.labels = self.prepare(filename, path, option)
+
+    def __getitem__(self, idx):
+        item = {key: val[idx] for key, val in self.sources.items()}
+        item['labels'] = self.labels[idx]
+        item['targets'] = self.targets['input_ids'][idx]
+        item['sources2'] = self.features2['input_ids'][idx]
+        item['targets2'] = {key: val[idx] for key, val in self.targets2.items()}
         return item
 
     def __len__(self):
