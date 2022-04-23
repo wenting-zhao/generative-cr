@@ -218,9 +218,13 @@ def main():
                             outputs_l[i][j] = 1
                 predictions = sum(outputs_l, [])
                 labels = eval_batch['labels'].view(-1).tolist()
+                entropy = 0.
+                for i in range(len(labels_l)-1):
+                    normalized = m(outputs[labels_l[i]:labels_l[i+1]]).view(1, -1)
+                    entropy += args.reg_coeff * torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
                 #normalized = m(outputs)
                 #entropy = torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
-                #ents.append(entropy.cpu().item())
+                ents.append(entropy.cpu().item())
                 #predictions = outputs.argmin(dim=-1)
                 metric.add_batch(
                     predictions=predictions,
@@ -236,7 +240,7 @@ def main():
                 wandb.log({
                     "step": completed_steps,
                     f"{split} Loss": outputs.mean(),
-                    #f"{split} Reg": np.mean(ents),
+                    f"{split} Reg": np.mean(ents),
                     f"{split} Acc": eval_metric})
         return eval_metric['accuracy']
 
@@ -363,13 +367,21 @@ def main():
             #normalized = m(reshaped_outputs)
             #entropy = args.reg_coeff * torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
             #args.reg_coeff -= step_size
+            labels_l = [0]
+            for i in range(len(batch['labels'])):
+                labels_l.append(labels_l[-1]+len(batch['labels'][i]))
+            entropy = 0.
+            for i in range(len(labels_l)-1):
+                normalized = m(outputs[labels_l[i]:labels_l[i+1]]).view(1, -1)
+                print(normalized)
+                entropy += args.reg_coeff * torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
             if args.supervised:
                 loss = -loss_fct(reshaped_outputs.view(-1, 2), batch['labels'])
             else:
                 loss = outputs.mean()
                 if args.zx_model:
                     loss += outputs2.mean()
-            tot_loss = loss #+ entropy
+            tot_loss = loss + entropy
             tot_loss.backward()
             if step % args.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
                 optim.step()
@@ -384,7 +396,7 @@ def main():
                 if not args.nolog:
                     wandb.log({
                         "step": completed_steps,
-                        #"Reg": entropy.item(),
+                        "Reg": entropy.item(),
                         "Train Loss": loss.item()})
 
 
