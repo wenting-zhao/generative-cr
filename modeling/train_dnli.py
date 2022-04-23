@@ -103,7 +103,7 @@ class DataCollatorForMultipleChoice:
         #batch = {k: v.view(batch_size, num_choices, -1) for k, v in batch.items()}
         # Add back labels
         batch = dict()
-        batch["labels"] = torch.tensor(labels, dtype=torch.int64)
+        batch["labels"] = labels
         batch["sources"] = batch_sources
         batch["targets"] = batch_targets
         batch["premises"] = batch_premises
@@ -181,11 +181,9 @@ def main():
         for step, eval_batch in enumerate(dataloader):
             bs = len(eval_batch['sources']["input_ids"])
             for key in eval_batch:
-                if isinstance(eval_batch[key], dict):
-                    for key2 in eval_batch[key]:
-                        eval_batch[key][key2] = eval_batch[key][key2].to(device)
-                else:
-                    eval_batch[key] = eval_batch[key].to(device)
+                if key == "labels": continue
+                for key2 in eval_batch[key]:
+                    eval_batch[key][key2] = eval_batch[key][key2].to(device)
             if args.baseline:
                 concated = torch.cat((eval_batch["input_ids"], eval_batch["targets"]), dim=1)
                 concated_label = torch.cat((eval_batch["input_ids"], eval_batch["targets"]), dim=1)
@@ -217,7 +215,7 @@ def main():
                         else:
                             outputs_l[i][j] = 1
                 predictions = sum(outputs_l, [])
-                labels = eval_batch['labels'].view(-1).tolist()
+                labels = sum(eval_batch['labels'], [])
                 entropy = 0.
                 for i in range(len(labels_l)-1):
                     normalized = m(outputs[labels_l[i]:labels_l[i+1]]).view(1, -1)
@@ -334,7 +332,7 @@ def main():
     if not args.nolog:
         wandb.init(name=run_name,
                project='generative dNLI',
-               tags=['anli'])
+               tags=['dnli', args.option])
         wandb.config.lr = args.learning_rate
         wandb.watch(model)
         if args.zx_model:
@@ -355,11 +353,9 @@ def main():
                         model.save_pretrained(f"{args.output_model_dir}/{run_name}")
             bs = len(batch['sources']["input_ids"])
             for key in batch:
-                if isinstance(batch[key], dict):
-                    for key2 in batch[key]:
-                        batch[key][key2] = batch[key][key2].to(device)
-                else:
-                    batch[key] = batch[key].to(device)
+                if key == "labels": continue
+                for key2 in batch[key]:
+                    batch[key][key2] = batch[key][key2].to(device)
             outputs = model(input_ids=batch["sources"]["input_ids"], attention_mask=batch["sources"]["attention_mask"], labels=batch["targets"]["input_ids"]).loss
             if args.zx_model:
                 outputs2 = model2(input_ids=batch["premises"]["input_ids"], attention_mask=batch["premises"]["attention_mask"], labels=batch["reasons"]["input_ids"]).loss
@@ -373,7 +369,6 @@ def main():
             entropy = 0.
             for i in range(len(labels_l)-1):
                 normalized = m(outputs[labels_l[i]:labels_l[i+1]]).view(1, -1)
-                print(normalized)
                 entropy += args.reg_coeff * torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
             if args.supervised:
                 loss = -loss_fct(reshaped_outputs.view(-1, 2), batch['labels'])
