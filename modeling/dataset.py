@@ -265,7 +265,7 @@ class SenMakingDataset(torch.utils.data.Dataset):
 class DeltaNLIDataset(torch.utils.data.Dataset):
     def preprocess_function(self, examples, tokenizer, ending_names, option):
         if option == "social":
-            premise = "SocialChemROT"
+            premise = "SocialChemSituation"
         else:
             premise = "Premise"
         first_sentences = [[f"{example[premise]} {tokenizer.sep_token} {end}" 
@@ -295,7 +295,7 @@ class DeltaNLIDataset(torch.utils.data.Dataset):
     def prepare(self, filename, path, option):
         print("preparing ", filename)
         if option == "social":
-            premise = "SocialChemROT"
+            premise = "SocialChemSituation"
         else:
             premise = "Premise"
         ending_names = ["strengtheners", "weakeners"]

@@ -219,7 +219,7 @@ def main():
                 entropy = 0.
                 for i in range(len(labels_l)-1):
                     normalized = m(outputs[labels_l[i]:labels_l[i+1]]).view(1, -1)
-                    entropy += args.reg_coeff * torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
+                    entropy += torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
                 #normalized = m(outputs)
                 #entropy = torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
                 ents.append(entropy.cpu().item())
