@@ -396,12 +396,10 @@ class WinoDataset(torch.utils.data.Dataset):
             tmp['correct'] = []
             tmp['incorrect'] = []
             for r in data[i]['reasons']:
-                if r[-1] == 'Valid':
+                if r[2] >= 0.8:
                     tmp['correct'].append('because ' + r[0].strip())
-                elif r[-1] == 'Invalid':
+                elif r[2] <= 0.2:
                     tmp['incorrect'].append('because ' + r[0].strip())
-                else:
-                    assert r[-1] == 'Undecided'
             pron = data[i]['text']['pron']
             tmp['x'] = data[i]['text']['txt1'] + ' ' + pron + ' ' + data[i]['text']['txt2']
             tmp['y'] = f"Therefore \"{pron}\" refers to {answer}."
