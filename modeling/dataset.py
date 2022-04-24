@@ -2,7 +2,7 @@ import csv
 import json
 import pickle
 import os
-from itertools import groupby
+from itertools import groupby, product
 from tqdm import tqdm
 import torch
 from transformers import AutoTokenizer
@@ -337,6 +337,94 @@ class DeltaNLIDataset(torch.utils.data.Dataset):
 
     def __init__(self, filename, path, option):
         self.sources, self.targets, self.features2, self.targets2, self.labels = self.prepare(filename, path, option)
+
+    def __getitem__(self, idx):
+        item = {key: val[idx] for key, val in self.sources.items()}
+        item['labels'] = self.labels[idx]
+        item['targets'] = self.targets['input_ids'][idx]
+        item['sources2'] = self.features2['input_ids'][idx]
+        item['targets2'] = {key: val[idx] for key, val in self.targets2.items()}
+        return item
+
+    def __len__(self):
+        return len(self.labels)
+
+
+class WinoDataset(torch.utils.data.Dataset):
+    def preprocess_function(self, examples, tokenizer, ending_names):
+        premise = "x"
+        first_sentences = [[f"{example[premise]} {tokenizer.sep_token} {end}" 
+             for end in example[ending_names[0]]+example[ending_names[1]]] for example in examples]
+        second_sentences = [[example["y"]] for example in examples]
+        third_sentences = [[example[premise]] for example in examples]
+        fourth_sentences = [[f"{end}" for end in example[ending_names[0]]+example[ending_names[1]]] for example in examples]
+
+        first_sentences = sum(first_sentences, [])
+        second_sentences = sum(second_sentences, [])
+        third_sentences = sum(third_sentences, [])
+        fourth_sentences = sum(fourth_sentences, [])
+
+        tokenized_sources = tokenizer(first_sentences, truncation=True)
+        tokenized_targets = tokenizer(second_sentences, truncation=True)
+        tokenized_sources2 = tokenizer(third_sentences, truncation=True)
+        tokenized_targets2 = tokenizer(fourth_sentences, truncation=True)
+        length = len(ending_names)
+        tokenized_sources = {k: [v[i:i+length] for i in range(0, len(v), length)] for k, v in tokenized_sources.items()}
+        tokenized_targets = {k: [v[i] for i in range(len(v))] for k, v in tokenized_targets.items()}
+        tokenized_sources2 = {k: [v[i] for i in range(len(v))] for k, v in tokenized_sources2.items()}
+        tokenized_targets2 = {k: [v[i:i+length] for i in range(0, len(v), length)] for k, v in tokenized_targets2.items()}
+        return tokenized_sources, tokenized_targets, tokenized_sources2, tokenized_targets2
+    
+    def prepare(self, filename, path):
+        print("preparing ", filename)
+        ending_names = ["correct", "incorrect"]
+        tokenizer = AutoTokenizer.from_pretrained(path, use_fast=True)
+        ori_data = []
+        labels = []
+
+        with open(filename, 'r') as f:
+            data = json.load(f)
+        for i in range(len(data)):
+            tmp = dict()
+            if 'A' in data[i]['correctAnswer']:
+                answer = data[i]['answers'][0]
+            else:
+                assert 'B' in data[i]['correctAnswer']
+                answer = data[i]['answers'][1]
+            tmp['correct'] = []
+            tmp['incorrect'] = []
+            for r in data[i]['reasons']:
+                if r[-1] == 'Valid':
+                    tmp['correct'].append('because ' + r[0].strip())
+                elif r[-1] == 'Invalid':
+                    tmp['incorrect'].append('because ' + r[0].strip())
+                else:
+                    assert r[-1] == 'Undecided'
+            pron = data[i]['text']['pron']
+            tmp['x'] = data[i]['text']['txt1'] + ' ' + pron + ' ' + data[i]['text']['txt2']
+            tmp['y'] = f"Therefore \"{pron}\" refers to {answer}."
+            data[i] = tmp
+        data2 = []
+        for d in data:
+            for c, ic in product(d['correct'], d['incorrect']):
+                d2 = dict()
+                d2['x'] = d['x']
+                d2['y'] = d['y']
+                d2['correct'] = c
+                d2['incorrect'] = ic
+                data2.append(d2)
+                labels.append(0)
+        if os.path.isfile(f"cache/wino_encodings.pkl"):
+            with open(f"cache/wino_encodings.pkl", 'rb') as f:
+                features, targets, features2, targets2 = pickle.load(f)
+        else:
+            features, targets, features2, targets2 = self.preprocess_function(data2, tokenizer, ending_names)
+            with open(f"cache/wino_encodings.pkl", 'wb') as f:
+                pickle.dump((features, targets, features2, targets2), f)
+        return features, targets, features2, targets2, labels
+
+    def __init__(self, filename, path):
+        self.sources, self.targets, self.features2, self.targets2, self.labels = self.prepare(filename, path)
 
     def __getitem__(self, idx):
         item = {key: val[idx] for key, val in self.sources.items()}
