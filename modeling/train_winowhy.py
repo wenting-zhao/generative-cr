@@ -50,11 +50,11 @@ class DataCollatorForMultipleChoice:
 
     def __call__(self, features):
         batch_size = len(features)
-        num_choices = len(features[0]['input_ids'])
+        num_choices = [len(features[i]["labels"]) for i in range(len(features))]
         label_name = "label" if "label" in features[0].keys() else "labels"
         labels = [feature.pop(label_name) for feature in features]
-        targets = [[features[i].pop("targets")] * num_choices for i in range(len(features))]
-        premises = [[features[i].pop("sources2")] * num_choices for i in range(len(features))]
+        targets = [[features[i].pop("targets")] * num_choices[i] for i in range(len(features))]
+        premises = [[features[i].pop("sources2")] * num_choices[i] for i in range(len(features))]
         reasons = [[feature.pop("targets2")] for feature in features]
         targets = list(chain(*targets))
         premises = list(chain(*premises))
@@ -62,11 +62,11 @@ class DataCollatorForMultipleChoice:
         targets = [{"input_ids": x} for x in targets]
         premises = [{"input_ids": x} for x in premises]
         flattened_features = [
-            [{k: v[j] for k, v in features[i].items()} for j in range(num_choices)] for i in range(len(features))
+            [{k: v[j] for k, v in features[i].items()} for j in range(num_choices[i])] for i in range(len(features))
         ]
         flattened_features = list(chain(*flattened_features))
         flattened_reasons = [
-            [{k: v[j] for k, v in reasons[i].items()} for j in range(num_choices)] for i in range(len(reasons))
+            [{k: v[j] for k, v in reasons[i].items()} for j in range(num_choices[i])] for i in range(len(reasons))
         ]
         flattened_reasons = list(chain(*flattened_reasons))
 
@@ -103,7 +103,7 @@ class DataCollatorForMultipleChoice:
         #batch = {k: v.view(batch_size, num_choices, -1) for k, v in batch.items()}
         # Add back labels
         batch = dict()
-        batch["labels"] = torch.tensor(labels, dtype=torch.int64)
+        batch["labels"] = labels
         batch["sources"] = batch_sources
         batch["targets"] = batch_targets
         batch["premises"] = batch_premises
@@ -180,8 +180,7 @@ def main():
         for step, eval_batch in enumerate(dataloader):
             bs = len(eval_batch['sources']["input_ids"])
             for key in eval_batch:
-                if key == "labels":
-                    eval_batch['labels'] = eval_batch['labels'].to(device)
+                if key == "labels": continue
                 for key2 in eval_batch[key]:
                     eval_batch[key][key2] = eval_batch[key][key2].to(device)
             if args.baseline:
@@ -201,12 +200,26 @@ def main():
                 if args.zx_model:
                     outputs2 = outputs2.view(bs, -1).mean(dim=-1)
                     outputs += outputs2
-                outputs = outputs.view(-1, 2)
-                normalized = m(outputs)
-                entropy = torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
+                outputs_l = outputs.tolist()
+                labels_l = [0]
+                for i in range(len(eval_batch['labels'])):
+                    labels_l.append(labels_l[-1]+len(eval_batch['labels'][i]))
+                outputs_l = [outputs_l[labels_l[i]:labels_l[i+1]] for i in range(len(labels_l)-1)]
+                for i in range(len(outputs_l)):
+                    median = np.median(outputs_l[i])
+                    tmp = []
+                    for j in range(len(outputs_l[i])):
+                        if outputs_l[i][j] <= median:
+                            outputs_l[i][j] = 0
+                        else:
+                            outputs_l[i][j] = 1
+                predictions = sum(outputs_l, [])
+                labels = sum(eval_batch['labels'], [])
+                entropy = 0.
+                for i in range(len(labels_l)-1):
+                    normalized = m(outputs[labels_l[i]:labels_l[i+1]]).view(1, -1)
+                    entropy += torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
                 ents.append(entropy.cpu().item())
-                predictions = outputs.argmin(dim=-1)
-                labels = torch.zeros(predictions.shape)
                 metric.add_batch(
                     predictions=predictions,
                     references=labels,
@@ -330,18 +343,19 @@ def main():
                     model.save_pretrained(f"{args.output_model_dir}/{run_name}")
             bs = len(batch['sources']["input_ids"])
             for key in batch:
-                if key == "labels":
-                    batch['labels'] = batch['labels'].to(device)
+                if key == "labels": continue
                 for key2 in batch[key]:
                     batch[key][key2] = batch[key][key2].to(device)
             outputs = model(input_ids=batch["sources"]["input_ids"], attention_mask=batch["sources"]["attention_mask"], labels=batch["targets"]["input_ids"]).loss
             if args.zx_model:
                 outputs2 = model2(input_ids=batch["premises"]["input_ids"], attention_mask=batch["premises"]["attention_mask"], labels=batch["reasons"]["input_ids"]).loss
-                outputs = outputs.view(bs, -1).mean(dim=-1) + outputs2.view(bs, -1).mean(dim=-1)
-            reshaped_outputs = outputs.view(bs, -1).mean(dim=-1).view(-1, 2)
-            normalized = m(reshaped_outputs)
-            entropy = args.reg_coeff * torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
-            args.reg_coeff -= step_size
+            labels_l = [0]
+            for i in range(len(batch['labels'])):
+                labels_l.append(labels_l[-1]+len(batch['labels'][i]))
+            entropy = 0.
+            for i in range(len(labels_l)-1):
+                normalized = m(outputs[labels_l[i]:labels_l[i+1]]).view(1, -1)
+                entropy += args.reg_coeff * torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
             if args.supervised:
                 loss = -loss_fct(reshaped_outputs.view(-1, 2), batch['labels'])
             else:

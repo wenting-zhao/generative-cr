@@ -368,11 +368,13 @@ class WinoDataset(torch.utils.data.Dataset):
         tokenized_targets = tokenizer(second_sentences, truncation=True)
         tokenized_sources2 = tokenizer(third_sentences, truncation=True)
         tokenized_targets2 = tokenizer(fourth_sentences, truncation=True)
-        length = len(ending_names)
-        tokenized_sources = {k: [v[i:i+length] for i in range(0, len(v), length)] for k, v in tokenized_sources.items()}
+        lengths = [0]
+        for e in examples:
+            lengths.append(lengths[-1]+len(e[ending_names[0]]+e[ending_names[1]]))
+        tokenized_sources = {k: [v[lengths[i]:lengths[i+1]] for i in range(len(lengths)-1)] for k, v in tokenized_sources.items()}
         tokenized_targets = {k: [v[i] for i in range(len(v))] for k, v in tokenized_targets.items()}
         tokenized_sources2 = {k: [v[i] for i in range(len(v))] for k, v in tokenized_sources2.items()}
-        tokenized_targets2 = {k: [v[i:i+length] for i in range(0, len(v), length)] for k, v in tokenized_targets2.items()}
+        tokenized_targets2 = {k: [v[lengths[i]:lengths[i+1]] for i in range(len(lengths)-1)] for k, v in tokenized_targets2.items()}
         return tokenized_sources, tokenized_targets, tokenized_sources2, tokenized_targets2
     
     def prepare(self, filename, path):
@@ -403,22 +405,15 @@ class WinoDataset(torch.utils.data.Dataset):
             pron = data[i]['text']['pron']
             tmp['x'] = data[i]['text']['txt1'] + ' ' + pron + ' ' + data[i]['text']['txt2']
             tmp['y'] = f"Therefore \"{pron}\" refers to {answer}."
+            tmp['labels'] = len(tmp['correct']) * [0] + len(tmp['incorrect']) * [1]
             data[i] = tmp
-        data2 = []
-        for d in data:
-            for c, ic in product(d['correct'], d['incorrect']):
-                d2 = dict()
-                d2['x'] = d['x']
-                d2['y'] = d['y']
-                d2['correct'] = c
-                d2['incorrect'] = ic
-                data2.append(d2)
-                labels.append(0)
+        labels = [d['labels'] for d in data]
+
         if os.path.isfile(f"cache/wino_encodings.pkl"):
             with open(f"cache/wino_encodings.pkl", 'rb') as f:
                 features, targets, features2, targets2 = pickle.load(f)
         else:
-            features, targets, features2, targets2 = self.preprocess_function(data2, tokenizer, ending_names)
+            features, targets, features2, targets2 = self.preprocess_function(data, tokenizer, ending_names)
             with open(f"cache/wino_encodings.pkl", 'wb') as f:
                 pickle.dump((features, targets, features2, targets2), f)
         return features, targets, features2, targets2, labels
