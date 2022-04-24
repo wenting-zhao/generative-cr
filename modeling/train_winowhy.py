@@ -337,7 +337,7 @@ def main():
             outputs = model(input_ids=batch["sources"]["input_ids"], attention_mask=batch["sources"]["attention_mask"], labels=batch["targets"]["input_ids"]).loss
             if args.zx_model:
                 outputs2 = model2(input_ids=batch["premises"]["input_ids"], attention_mask=batch["premises"]["attention_mask"], labels=batch["reasons"]["input_ids"]).loss
-                outputs += outputs2
+                outputs = outputs.view(bs, -1).mean(dim=-1) + outputs2.view(bs, -1).mean(dim=-1)
             reshaped_outputs = outputs.view(bs, -1).mean(dim=-1).view(-1, 2)
             normalized = m(reshaped_outputs)
             entropy = args.reg_coeff * torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
