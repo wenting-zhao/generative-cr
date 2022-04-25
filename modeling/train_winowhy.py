@@ -206,7 +206,8 @@ def main():
                     labels_l.append(labels_l[-1]+len(eval_batch['labels'][i]))
                 outputs_l = [outputs_l[labels_l[i]:labels_l[i+1]] for i in range(len(labels_l)-1)]
                 for i in range(len(outputs_l)):
-                    median = np.median(outputs_l[i])
+                    #median = np.median(outputs_l[i])
+                    median = (np.max(outputs_l[i]) + np.min(outputs_l[i])) / 2
                     tmp = []
                     for j in range(len(outputs_l[i])):
                         if outputs_l[i][j] <= median:
@@ -225,9 +226,9 @@ def main():
                     references=labels,
                 )
                 if args.sample:
-                    out.append(outputs.cpu())
+                    out.append(outputs_l)
         if args.sample:
-            torch.save(torch.cat(out, dim=0), f"logging/{run_name}|step-{completed_steps}.pt")
+            torch.save(sum(out, []), f"logging/{run_name}|step-{completed_steps}.pt")
         eval_metric = metric.compute()
         if not args.baseline:
             if not args.nolog:

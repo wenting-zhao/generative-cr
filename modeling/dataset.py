@@ -402,6 +402,8 @@ class WinoDataset(torch.utils.data.Dataset):
                     tmp['incorrect'].append('because ' + r[0].strip())
             pron = data[i]['text']['pron']
             tmp['x'] = data[i]['text']['txt1'] + ' ' + pron + ' ' + data[i]['text']['txt2']
+            tmp['x'] += f" What does \"{pron}\" refer to?"
+            #tmp['x'] += f" Does \"{pron}\" refer to " + data[i]['answers'][0] + ' or ' + data[i]['answers'][1] + '?'
             tmp['y'] = f"Therefore \"{pron}\" refers to {answer}."
             tmp['labels'] = len(tmp['correct']) * [0] + len(tmp['incorrect']) * [1]
             data[i] = tmp
