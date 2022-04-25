@@ -206,8 +206,7 @@ def main():
                     labels_l.append(labels_l[-1]+len(eval_batch['labels'][i]))
                 outputs_l = [outputs_l[labels_l[i]:labels_l[i+1]] for i in range(len(labels_l)-1)]
                 for i in range(len(outputs_l)):
-                    #median = np.median(outputs_l[i])
-                    median = (np.max(outputs_l[i]) + np.min(outputs_l[i])) / 2
+                    median = np.median(outputs_l[i])
                     tmp = []
                     for j in range(len(outputs_l[i])):
                         if outputs_l[i][j] <= median:
