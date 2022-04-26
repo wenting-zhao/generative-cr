@@ -264,10 +264,7 @@ class SenMakingDataset(torch.utils.data.Dataset):
 
 class DeltaNLIDataset(torch.utils.data.Dataset):
     def preprocess_function(self, examples, tokenizer, ending_names, option):
-        if option == "social":
-            premise = "SocialChemSituation"
-        else:
-            premise = "Premise"
+        premise = "Premise"
         first_sentences = [[f"{example[premise]} {tokenizer.sep_token} {end}" 
              for end in example[ending_names[0]]+example[ending_names[1]]] for example in examples]
         second_sentences = [[example["Hypothesis"]] for example in examples]
@@ -294,10 +291,7 @@ class DeltaNLIDataset(torch.utils.data.Dataset):
     
     def prepare(self, filename, path, option):
         print("preparing ", filename)
-        if option == "social":
-            premise = "SocialChemSituation"
-        else:
-            premise = "Premise"
+        premise = "Premise"
         ending_names = ["strengtheners", "weakeners"]
         tokenizer = AutoTokenizer.from_pretrained(path, use_fast=True)
         ori_data = []
@@ -305,12 +299,18 @@ class DeltaNLIDataset(torch.utils.data.Dataset):
         with open(filename, 'r') as fin:
             for line in fin:
                 ori_data.append(json.loads(line))
-        ori_data = groupby(ori_data, key=lambda d: d[premise]+d["Hypothesis"])
+        if option == "social":
+            ori_data = groupby(ori_data, key=lambda d: d["Hypothesis"])
+        else:
+            ori_data = groupby(ori_data, key=lambda d: d[premise]+d["Hypothesis"])
         data = []
         for _, v in ori_data:
             v = list(v)
             data_i = dict()
-            data_i[premise] = v[0][premise]
+            if option == "social":
+                data_i[premise] = ""
+            else:
+                data_i[premise] = v[0][premise]
             data_i["Hypothesis"] = v[0]["Hypothesis"]
             data_i["strengtheners"] = []
             data_i["weakeners"] = []
