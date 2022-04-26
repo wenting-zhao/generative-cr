@@ -317,7 +317,7 @@ class DeltaNLIDataset(torch.utils.data.Dataset):
             for vi in v:
                 if vi["UpdateType"] == "strengthener":
                     data_i["strengtheners"].append(vi["Update"])
-                else:
+                elif vi["UpdateType"] == "weakener":
                     data_i["weakeners"].append(vi["Update"])
             data_i['labels'] = len(data_i["strengtheners"]) * [0] + len(data_i["weakeners"]) * [1]
             assert len(data_i["strengtheners"]) == len(data_i["weakeners"])

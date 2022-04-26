@@ -115,6 +115,7 @@ def get_args():
     parser.add_argument("--train_path", type=str, required=True)
     parser.add_argument("--valid_path", type=str, required=True)
     parser.add_argument("--test_path", type=str)
+    parser.add_argument("--reg", type=str, default="entropy")
     parser.add_argument('--baseline', action='store_true')
     parser.add_argument('--supervised', action='store_true')
     parser.add_argument('--zx_model', action='store_true')
@@ -215,11 +216,14 @@ def main():
                             outputs_l[i][j] = 1
                 predictions = sum(outputs_l, [])
                 labels = sum(eval_batch['labels'], [])
-                entropy = 0.
+                reg = 0.
                 for i in range(len(labels_l)-1):
                     normalized = m(outputs[labels_l[i]:labels_l[i+1]]).view(1, -1)
-                    entropy += torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
-                ents.append(entropy.cpu().item())
+                    if args.reg == "entropy":
+                        reg += torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
+                    elif args.reg == "variance":
+                        reg += -torch.var(normalized, dim=-1, unbiased=False)
+                ents.append(reg.cpu().item())
                 metric.add_batch(
                     predictions=predictions,
                     references=labels,
@@ -268,7 +272,7 @@ def main():
     if args.zx_model:
         run_name=f'zx-model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff}'
     else:
-        run_name=f'model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff}'
+        run_name=f'model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} {args.reg}-{args.reg_coeff}'
 
     if args.baseline:
         print("valid:", evaluate(eval_dataloader, "Valid"))
@@ -352,15 +356,18 @@ def main():
             labels_l = [0]
             for i in range(len(batch['labels'])):
                 labels_l.append(labels_l[-1]+len(batch['labels'][i]))
-            entropy = 0.
+            reg = 0.
             for i in range(len(labels_l)-1):
                 normalized = m(outputs[labels_l[i]:labels_l[i+1]]).view(1, -1)
-                entropy += args.reg_coeff * torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
+                if args.reg == "entropy":
+                    reg += args.reg_coeff * torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
+                elif args.reg == "variance":
+                    reg += args.reg_coeff * -torch.var(normalized, dim=-1, unbiased=False)
             if args.supervised:
                 loss = -loss_fct(reshaped_outputs.view(-1, 2), batch['labels'])
             else:
                 loss = outputs.mean()
-            tot_loss = loss + entropy
+            tot_loss = loss + reg
             tot_loss.backward()
             if step % args.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
                 optim.step()
@@ -375,7 +382,7 @@ def main():
                 if not args.nolog:
                     wandb.log({
                         "step": completed_steps,
-                        "Reg": entropy.item(),
+                        "Reg": reg.item(),
                         "Train Loss": loss.item()})
 
 
