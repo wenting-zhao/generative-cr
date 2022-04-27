@@ -291,7 +291,10 @@ class DeltaNLIDataset(torch.utils.data.Dataset):
     
     def prepare(self, filename, path, option):
         print("preparing ", filename)
-        premise = "Premise"
+        if option == "social":
+            premise = "SocialChemSituation"
+        else:
+            premise = "Premise"
         ending_names = ["strengtheners", "weakeners"]
         tokenizer = AutoTokenizer.from_pretrained(path, use_fast=True)
         ori_data = []
@@ -299,26 +302,20 @@ class DeltaNLIDataset(torch.utils.data.Dataset):
         with open(filename, 'r') as fin:
             for line in fin:
                 ori_data.append(json.loads(line))
-        if option == "social":
-            ori_data = groupby(ori_data, key=lambda d: d["Hypothesis"])
-        else:
-            ori_data = groupby(ori_data, key=lambda d: d[premise]+d["Hypothesis"])
+        ori_data = groupby(ori_data, key=lambda d: d[premise]+d["Hypothesis"])
         data = []
         for _, v in ori_data:
             v = list(v)
             data_i = dict()
-            if option == "social":
-                data_i[premise] = ""
-            else:
-                data_i[premise] = v[0][premise]
+            data_i["Premise"] = v[0][premise]
             data_i["Hypothesis"] = v[0]["Hypothesis"]
             data_i["strengtheners"] = []
             data_i["weakeners"] = []
             for vi in v:
                 if vi["UpdateType"] == "strengthener":
-                    data_i["strengtheners"].append(vi["Update"])
+                    data_i["strengtheners"].append("because " + vi["Update"])
                 elif vi["UpdateType"] == "weakener":
-                    data_i["weakeners"].append(vi["Update"])
+                    data_i["weakeners"].append("because " + vi["Update"])
             data_i['labels'] = len(data_i["strengtheners"]) * [0] + len(data_i["weakeners"]) * [1]
             assert len(data_i["strengtheners"]) == len(data_i["weakeners"])
             data.append(data_i)

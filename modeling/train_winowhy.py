@@ -115,7 +115,6 @@ def get_args():
     parser.add_argument("--train_path", type=str, required=True)
     parser.add_argument("--valid_path", type=str, required=True)
     parser.add_argument("--test_path", type=str)
-    parser.add_argument("--reg", type=str, default="entropy")
     parser.add_argument('--baseline', action='store_true')
     parser.add_argument('--supervised', action='store_true')
     parser.add_argument('--zx_model', action='store_true')
@@ -219,10 +218,10 @@ def main():
                 reg = 0.
                 for i in range(len(labels_l)-1):
                     normalized = m(outputs[labels_l[i]:labels_l[i+1]]).view(1, -1)
-                    if args.reg == "entropy":
-                        reg += torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
-                    elif args.reg == "variance":
-                        reg += -torch.var(normalized, dim=-1, unbiased=False)
+                    diff, indices = torch.sort(normalized)
+                    diff = diff[0, 1:] - diff[0, :-1]
+                    middle = len(diff) // 2
+                    reg += args.reg_coeff * -(diff[middle] - diff[middle-1])
                 ents.append(reg.cpu().item())
                 metric.add_batch(
                     predictions=predictions,
@@ -272,7 +271,7 @@ def main():
     if args.zx_model:
         run_name=f'zx-model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff}'
     else:
-        run_name=f'model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} {args.reg}-{args.reg_coeff}'
+        run_name=f'model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff}'
 
     if args.baseline:
         print("valid:", evaluate(eval_dataloader, "Valid"))
@@ -359,10 +358,10 @@ def main():
             reg = 0.
             for i in range(len(labels_l)-1):
                 normalized = m(outputs[labels_l[i]:labels_l[i+1]]).view(1, -1)
-                if args.reg == "entropy":
-                    reg += args.reg_coeff * torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
-                elif args.reg == "variance":
-                    reg += args.reg_coeff * -torch.var(normalized, dim=-1, unbiased=False)
+                diff, indices = torch.sort(normalized)
+                diff = diff[0, 1:] - diff[0, :-1]
+                middle = len(diff) // 2
+                reg += args.reg_coeff * -(diff[middle] - diff[middle-1])
             if args.supervised:
                 loss = -loss_fct(reshaped_outputs.view(-1, 2), batch['labels'])
             else:
