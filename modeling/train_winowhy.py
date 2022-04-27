@@ -184,8 +184,8 @@ def main():
                 for key2 in eval_batch[key]:
                     eval_batch[key][key2] = eval_batch[key][key2].to(device)
             if args.baseline:
-                concated = torch.cat((eval_batch["input_ids"], eval_batch["targets"]), dim=1)
-                concated_label = torch.cat((eval_batch["input_ids"], eval_batch["targets"]), dim=1)
+                concated = torch.cat((eval_batch["sources"]["input_ids"], eval_batch["targets"]["input_ids"]), dim=1)
+                concated_label = torch.cat((eval_batch["sources"]["input_ids"], eval_batch["targets"]["input_ids"]), dim=1)
                 concated_label[concated_label==model.config.pad_token_id] = -100
                 with torch.no_grad():
                     outputs = model(input_ids=concated, labels=concated_label).loss
@@ -196,39 +196,39 @@ def main():
                     if args.zx_model:
                         eval_batch["reasons"]["input_ids"][eval_batch["reasons"]["input_ids"]==model.config.pad_token_id] = -100
                         outputs2 = model2(input_ids=eval_batch["premises"]["input_ids"], attention_mask=eval_batch["premises"]["attention_mask"], labels=eval_batch["reasons"]["input_ids"]).loss
-                outputs = outputs.view(bs, -1).mean(dim=-1)
-                if args.zx_model:
-                    outputs2 = outputs2.view(bs, -1).mean(dim=-1)
-                    outputs += outputs2
-                outputs_l = outputs.tolist()
-                labels_l = [0]
-                for i in range(len(eval_batch['labels'])):
-                    labels_l.append(labels_l[-1]+len(eval_batch['labels'][i]))
-                outputs_l = [outputs_l[labels_l[i]:labels_l[i+1]] for i in range(len(labels_l)-1)]
-                for i in range(len(outputs_l)):
-                    median = np.median(outputs_l[i])
-                    tmp = []
-                    for j in range(len(outputs_l[i])):
-                        if outputs_l[i][j] <= median:
-                            outputs_l[i][j] = 0
-                        else:
-                            outputs_l[i][j] = 1
-                predictions = sum(outputs_l, [])
-                labels = sum(eval_batch['labels'], [])
-                reg = 0.
-                for i in range(len(labels_l)-1):
-                    normalized = m(outputs[labels_l[i]:labels_l[i+1]]).view(1, -1)
-                    diff, indices = torch.sort(normalized)
-                    diff = diff[0, 1:] - diff[0, :-1]
-                    middle = len(diff) // 2
-                    reg += args.reg_coeff * -(diff[middle] - diff[middle-1])
-                ents.append(reg.cpu().item())
-                metric.add_batch(
-                    predictions=predictions,
-                    references=labels,
-                )
-                if args.sample:
-                    out.append(outputs_l)
+            outputs = outputs.view(bs, -1).mean(dim=-1)
+            if args.zx_model:
+                outputs2 = outputs2.view(bs, -1).mean(dim=-1)
+                outputs += outputs2
+            outputs_l = outputs.tolist()
+            labels_l = [0]
+            for i in range(len(eval_batch['labels'])):
+                labels_l.append(labels_l[-1]+len(eval_batch['labels'][i]))
+            outputs_l = [outputs_l[labels_l[i]:labels_l[i+1]] for i in range(len(labels_l)-1)]
+            for i in range(len(outputs_l)):
+                median = np.median(outputs_l[i])
+                tmp = []
+                for j in range(len(outputs_l[i])):
+                    if outputs_l[i][j] <= median:
+                        outputs_l[i][j] = 0
+                    else:
+                        outputs_l[i][j] = 1
+            predictions = sum(outputs_l, [])
+            labels = sum(eval_batch['labels'], [])
+            reg = 0.
+            for i in range(len(labels_l)-1):
+                normalized = m(outputs[labels_l[i]:labels_l[i+1]]).view(1, -1)
+                diff, indices = torch.sort(normalized)
+                diff = diff[0, 1:] - diff[0, :-1]
+                middle = len(diff) // 2
+                reg += args.reg_coeff * -(diff[middle] - diff[middle-1])
+            ents.append(reg.cpu().item())
+            metric.add_batch(
+                predictions=predictions,
+                references=labels,
+            )
+            if args.sample:
+                out.append(outputs_l)
         if args.sample:
             torch.save(sum(out, []), f"logging/{run_name}|step-{completed_steps}.pt")
         eval_metric = metric.compute()
@@ -274,6 +274,7 @@ def main():
         run_name=f'model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff}'
 
     if args.baseline:
+        m = nn.Softmax(dim=-1)
         print("valid:", evaluate(eval_dataloader, "Valid"))
         sys.exit(0)
 
