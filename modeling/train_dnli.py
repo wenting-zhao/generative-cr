@@ -219,10 +219,8 @@ def main():
             reg = 0.
             for i in range(len(labels_l)-1):
                 normalized = m(outputs[labels_l[i]:labels_l[i+1]]).view(1, -1)
-                diff, indices = torch.sort(normalized)
-                diff = diff[0, 1:] - diff[0, :-1]
-                middle = len(diff) // 2
-                reg += args.reg_coeff * -(diff[middle] - diff[middle-1])
+                tensor_len = torch.Tensor([len(normalized[0])//2]).to(device)
+                reg += torch.maximum(torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0), torch.log(tensor_len))
             #normalized = m(outputs)
             #entropy = torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
             ents.append(reg.cpu().item())
@@ -373,10 +371,8 @@ def main():
             reg = 0.
             for i in range(len(labels_l)-1):
                 normalized = m(outputs[labels_l[i]:labels_l[i+1]]).view(1, -1)
-                diff, indices = torch.sort(normalized)
-                diff = diff[0, 1:] - diff[0, :-1]
-                middle = len(diff) // 2
-                reg += args.reg_coeff * -(diff[middle] - diff[middle-1])
+                tensor_len = torch.Tensor([len(normalized[0])//2]).to(device)
+                reg += args.reg_coeff * torch.maximum(torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0), torch.log(tensor_len))
             if args.supervised:
                 loss = -loss_fct(reshaped_outputs.view(-1, 2), batch['labels'])
             else:
