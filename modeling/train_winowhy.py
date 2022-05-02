@@ -207,7 +207,6 @@ def main():
             outputs_l = [outputs_l[labels_l[i]:labels_l[i+1]] for i in range(len(labels_l)-1)]
             for i in range(len(outputs_l)):
                 median = np.median(outputs_l[i])
-                tmp = []
                 for j in range(len(outputs_l[i])):
                     if outputs_l[i][j] <= median:
                         outputs_l[i][j] = 0
@@ -301,7 +300,6 @@ def main():
         ]
         optim2 = AdamW(optimizer_grouped_parameters, lr=args.learning_rate)
     m = nn.Softmax(dim=-1)
-    loss_fct = nn.CrossEntropyLoss()
 
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     args.max_train_steps = args.epoch * num_update_steps_per_epoch
@@ -351,16 +349,24 @@ def main():
             outputs = model(input_ids=batch["sources"]["input_ids"], attention_mask=batch["sources"]["attention_mask"], labels=batch["targets"]["input_ids"]).loss
             if args.zx_model:
                 outputs2 = model2(input_ids=batch["premises"]["input_ids"], attention_mask=batch["premises"]["attention_mask"], labels=batch["reasons"]["input_ids"]).loss
+            reshaped_outputs = outputs.view(bs, -1).mean(dim=-1)
             labels_l = [0]
             for i in range(len(batch['labels'])):
                 labels_l.append(labels_l[-1]+len(batch['labels'][i]))
             reg = 0.
             for i in range(len(labels_l)-1):
-                normalized = m(outputs[labels_l[i]:labels_l[i+1]]).view(1, -1)
+                normalized = m(reshaped_outputs[labels_l[i]:labels_l[i+1]]).view(1, -1)
                 tensor_len = torch.Tensor([len(normalized[0])//2]).to(device)
                 reg += args.reg_coeff * torch.maximum(torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0), torch.log(tensor_len))
             if args.supervised:
-                loss = -loss_fct(reshaped_outputs.view(-1, 2), batch['labels'])
+                loss = 0.
+                for i in range(len(batch['labels'])):
+                    out = reshaped_outputs[labels_l[i]:labels_l[i+1]]
+                    labels = torch.Tensor(batch['labels'][i]).to(device)
+                    labels[labels==1] = -1
+                    labels[labels==0] = 1
+                    out = out * labels
+                    loss += out.mean()
             else:
                 loss = outputs.mean()
             tot_loss = loss + reg
