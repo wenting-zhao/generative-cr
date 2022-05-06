@@ -1,13 +1,17 @@
 import csv
+from collections import defaultdict
 import json
 import pickle
 import os
+import random
 from itertools import groupby, product
 from tqdm import tqdm
 import torch
 from transformers import AutoTokenizer
 from datasets import load_dataset
 #from generation_example import all_relations
+
+random.seed(555)
 
 class Dataset(torch.utils.data.Dataset):
     def preprocess_function(self, examples, tokenizer, ending_names, baseline=False):
@@ -117,16 +121,16 @@ class Dataset(torch.utils.data.Dataset):
 class AlphaNLIDataset(torch.utils.data.Dataset):
     def preprocess_function(self, examples, tokenizer, ending_names, option):
         premise = "obs1"
-        if option == 0:
+        if option == 0 or option == 4 or option == 5:
             first_sentences = [[f"{example[premise]} {example[end]}" for end in ending_names] for example in examples]
         elif option == 1:
             first_sentences = [[f"{example[premise]}"] for example in examples]
-        elif option == 2 or option == 4:
+        elif option == 2:
             first_sentences = []
             for example in examples:
                 correct = example[ending_names[0]] if example['label'] == 0 else example[ending_names[1]]
                 first_sentences.append([f"{example[premise]} {correct}"])
-        elif option == 3 or option == 5:
+        elif option == 3:
             first_sentences = []
             for example in examples:
                 correct = example[ending_names[1]] if example['label'] == 0 else example[ending_names[0]]
@@ -138,7 +142,7 @@ class AlphaNLIDataset(torch.utils.data.Dataset):
 
         tokenized_sources = tokenizer(first_sentences, truncation=True)
         tokenized_targets = tokenizer(second_sentences, truncation=True)
-        length = 1 if option > 0 else len(ending_names)
+        length = 1 if 2 <= option <= 3 else len(ending_names)
         tokenized_sources = {k: [v[i:i+length] for i in range(0, len(v), length)] for k, v in tokenized_sources.items()}
         tokenized_targets = {k: [v[i] for i in range(len(v))] for k, v in tokenized_targets.items()}
         return tokenized_sources, tokenized_targets
@@ -146,24 +150,49 @@ class AlphaNLIDataset(torch.utils.data.Dataset):
     def prepare(self, filename, path, option, mask_e):
         print("preparing ", filename)
         tokenizer = AutoTokenizer.from_pretrained(path, use_fast=True)
-        ending_names = ["hyp1", "hyp2"]
+        if option == 4 or option == 5:
+            ending_names = ["hyp1", "hyp2", "hyp3"]
+        else:
+            ending_names = ["hyp1", "hyp2"]
         data = []
         labels = []
         with open(filename, 'r') as fin:
             for line in fin:
                 data.append(json.loads(line))
+        if option == 4 or option == 5:
+            saved_data_path = "cache/anli_random_" + filename.split('/')[-1].split('.')[0] + f"_{option}.pt"
+            if os.path.isfile(saved_data_path):
+                data = torch.load(saved_data_path)
+            else:
+                print("generating ", saved_data_path)
+                explanations = defaultdict(set)
+                for d in data:
+                    key = d["obs1"]
+                    explanations[key].add(d["hyp1"])
+                    explanations[key].add(d["hyp2"])
+                if option == 4:
+                    keys = list(explanations.keys())
+                else:
+                    values = list(explanations.values())
+                    values = " ".join(list(set().union(*values))).split()
+                    values = list(set(values)) 
+                for d in data:
+                    if option == 4:
+                        key = d["obs1"]
+                        while key == d["obs1"]:
+                            key = random.choice(keys)
+                        d["hyp3"] = random.choice(list(explanations[key]))
+                    else:
+                        num1 = len(d["hyp1"].split())
+                        num2 = len(d["hyp2"].split())
+                        high = max(num1, num2)
+                        low = min(num1, num2)
+                        d["hyp3"] = " ".join(random.sample(values, random.randint(low, high))) + '.'
+                torch.save(data, saved_data_path)
         with open(filename.replace(".jsonl", "-labels.lst"), 'r') as fin:
             for idx, line in enumerate(fin):
                 labels.append(int(line) - 1)
                 data[idx]['label'] = labels[-1]
-        #dedup_data, dedup_labels = [], []
-        #obs1ss = []
-        #for d, label in zip(data, labels):
-        #    if d['obs1'] not in obs1ss:
-        #        obs1ss.append(d['obs1'])
-        #        dedup_data.append(d)
-        #        dedup_labels.append(label)
-        #data, labels = dedup_data, dedup_labels
 
         if "train" in filename:
             if os.path.isfile(f"cache/anli_encodings_{option}.pkl"):

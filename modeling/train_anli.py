@@ -103,8 +103,6 @@ def get_args():
                         help="eval batch size per gpu.")
     parser.add_argument("--epoch", '-epoch', default=10, type=int,
                         help="The number of epochs for fine-tuning.")
-    parser.add_argument("--num_choice", default=2, type=int,
-                        help="The number of choices in QA.")
     parser.add_argument("--num_cst", default=51, type=int,
                         help="The number of commonsense triplets.")
     parser.add_argument("--model_dir", default="roberta-large", type=str,
@@ -153,6 +151,9 @@ def main():
             out = []
         for step, eval_batch in enumerate(dataloader):
             bs = len(eval_batch['targets'])
+            num_choices = eval_batch['targets'].shape[0] / eval_batch['labels'].shape[0]
+            assert num_choices == int(num_choices)
+            num_choices = int(num_choices)
             for key in eval_batch:
                 eval_batch[key] = eval_batch[key].to(device)
             if args.baseline:
@@ -164,9 +165,9 @@ def main():
             else:
                 with torch.no_grad():
                     outputs = model(input_ids=eval_batch["input_ids"], attention_mask=eval_batch["attention_mask"], labels=eval_batch["targets"]).loss
-            if args.option == 0:
+            if args.option == 0 or args.option == 4 or args.option == 5:
                 outputs = outputs.view(bs, -1).mean(dim=-1)
-                outputs = outputs.view(-1, 2)
+                outputs = outputs.view(-1, num_choices)
                 normalized = m(outputs)
                 entropy = torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
                 ents.append(entropy.cpu().item())
@@ -179,7 +180,7 @@ def main():
                     out.append(outputs.cpu())
         if args.sample:
             torch.save(torch.cat(out, dim=0), f"logging/{run_name}|step-{completed_steps}.pt")
-        if args.option == 0:
+        if args.option == 0 or args.option == 4 or args.option == 5:
             eval_metric = metric.compute()
         else:
             eval_metric = {'accuracy': -outputs.mean()}
@@ -277,15 +278,18 @@ def main():
                     if args.save_model:
                         model.save_pretrained(f"{args.output_model_dir}/{run_name}")
             bs = len(batch['targets'])
+            num_choices = batch['targets'].shape[0] / batch['labels'].shape[0]
+            assert num_choices == int(num_choices)
+            num_choices = int(num_choices)
             for key in batch:
                 batch[key] = batch[key].to(device)
             outputs = model(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"], labels=batch['targets']).loss
-            reshaped_outputs = outputs.view(bs, -1).mean(dim=-1).view(-1, 2)
+            reshaped_outputs = outputs.view(bs, -1).mean(dim=-1).view(-1, num_choices)
             normalized = m(reshaped_outputs)
             entropy = args.reg_coeff * torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
             args.reg_coeff -= step_size
             if args.supervised:
-                loss = -loss_fct(reshaped_outputs.view(-1, 2), batch['labels'])
+                loss = -loss_fct(reshaped_outputs.view(-1, num_choices), batch['labels'])
             else:
                 if args.viterbi_em:
                     loss = reshaped_outputs.min(dim=-1).values
