@@ -54,49 +54,59 @@ class DataCollatorForMultipleChoice:
         num_choices = len(features[0]["input_ids"])
         label_name = "label" if "label" in features[0].keys() else "labels"
         labels = [feature.pop(label_name) for feature in features]
-        targets = [[feature.pop("targets")] * num_choices for feature in features]
+        targets = [[features[i].pop("targets")] * num_choices for i in range(len(features))]
+        premises = [[features[i].pop("sources2")] * num_choices for i in range(len(features))]
+        reasons = [[feature.pop("targets2")] for feature in features]
         targets = list(chain(*targets))
+        premises = list(chain(*premises))
+        reasons = list(chain(*reasons))
         targets = [{"input_ids": x} for x in targets]
-        e_features = [feature.pop("e_features") for feature in features]
-        e_features = list(chain(*e_features))
-        e_features = [{"input_ids": x} for x in e_features]
+        premises = [{"input_ids": x} for x in premises]
         flattened_features = [
             [{k: v[i] for k, v in feature.items()} for i in range(num_choices)] for feature in features
         ]
         flattened_features = list(chain(*flattened_features))
+        flattened_reasons = [
+            [{k: v[j] for k, v in reasons[i].items()} for j in range(num_choices)] for i in range(len(reasons))
+        ]
+        flattened_reasons = list(chain(*flattened_reasons))
 
-        batch = self.tokenizer.pad(
+        batch_sources = self.tokenizer.pad(
             flattened_features,
             padding=self.padding,
             max_length=self.max_length,
             pad_to_multiple_of=self.pad_to_multiple_of,
             return_tensors="pt",
         )
-        batch_target = self.tokenizer.pad(
+        batch_targets = self.tokenizer.pad(
             targets,
             padding=self.padding,
             max_length=self.max_length,
             pad_to_multiple_of=self.pad_to_multiple_of,
             return_tensors="pt",
-        )['input_ids']
-        batch_target[batch_target==self.tokenizer.convert_tokens_to_ids(self.tokenizer.pad_token)] = -100
-        batch_features = self.tokenizer.pad(
-            e_features,
+        )
+        batch_premises = self.tokenizer.pad(
+            premises,
             padding=self.padding,
             max_length=self.max_length,
             pad_to_multiple_of=self.pad_to_multiple_of,
             return_tensors="pt",
         )
-        # Un-flatten
-        batch_features = {k: v.view(batch_size, num_choices, -1) for k, v in batch_features.items()}
-        batch_features_ids = batch_features['input_ids']
-        batch_features_mask = batch_features['attention_mask']
+        batch_reasons = self.tokenizer.pad(
+            flattened_reasons,
+            padding=self.padding,
+            max_length=self.max_length,
+            pad_to_multiple_of=self.pad_to_multiple_of,
+            return_tensors="pt",
+        )
 
         # Add back labels
+        batch = dict()
         batch["labels"] = torch.tensor(labels, dtype=torch.int64)
-        batch["targets"] = batch_target
-        batch["e_features"] = batch_features_ids
-        batch["e_features_mask"] = batch_features_mask
+        batch["sources"] = batch_sources
+        batch["targets"] = batch_targets
+        batch["premises"] = batch_premises
+        batch["reasons"] = batch_reasons
         return batch
 
 def get_args():
@@ -117,8 +127,6 @@ def get_args():
                         help="eval batch size per gpu.")
     parser.add_argument("--epoch", '-epoch', default=10, type=int,
                         help="The number of epochs for fine-tuning.")
-    parser.add_argument("--num_choice", default=2, type=int,
-                        help="The number of choices in QA.")
     parser.add_argument("--num_cst", default=51, type=int,
                         help="The number of commonsense triplets.")
     parser.add_argument("--model_dir", default="roberta-large", type=str,
@@ -166,9 +174,14 @@ def main():
         if args.sample:
             out = []
         for step, eval_batch in enumerate(dataloader):
-            bs = len(eval_batch['targets'])
+            bs = len(eval_batch['targets']["input_ids"])
+            num_choices = eval_batch['targets']["input_ids"].shape[0] / eval_batch['labels'].shape[0]
+            assert num_choices == int(num_choices)
+            num_choices = int(num_choices)
             for key in eval_batch:
-                eval_batch[key] = eval_batch[key].to(device)
+                if key == "labels": eval_batch[key] = eval_batch[key].to(device)
+                for key2 in eval_batch[key]:
+                    eval_batch[key][key2] = eval_batch[key][key2].to(device)
             if args.baseline:
                 concated = torch.cat((eval_batch["input_ids"], eval_batch["targets"]), dim=1)
                 concated_label = torch.cat((eval_batch["input_ids"], eval_batch["targets"]), dim=1)
@@ -177,11 +190,15 @@ def main():
                     outputs = model(input_ids=concated, labels=concated_label).loss
             else:
                 with torch.no_grad():
-                    outputs = model(input_ids=eval_batch["input_ids"], attention_mask=eval_batch["attention_mask"], labels=eval_batch["targets"]).loss
-                    outputs_e = e_model(input_ids=eval_batch["e_features"], attention_mask=eval_batch["e_features_mask"]).logits
-            if args.option == 0:
+                    eval_batch["targets"]["input_ids"][eval_batch["targets"]["input_ids"]==model.config.pad_token_id] = -100
+                    outputs = model(input_ids=eval_batch["sources"]["input_ids"], attention_mask=eval_batch["sources"]["attention_mask"], labels=eval_batch["targets"]["input_ids"]).loss
+                    eval_batch["reasons"]["input_ids"][eval_batch["reasons"]["input_ids"]==model.config.pad_token_id] = -100
+                    outputs2 = model(input_ids=eval_batch["premises"]["input_ids"], attention_mask=eval_batch["premises"]["attention_mask"], labels=eval_batch["reasons"]["input_ids"]).loss
+            if args.option == 0 or args.option == 4 or args.option == 5:
                 outputs = outputs.view(bs, -1).mean(dim=-1)
-                outputs = outputs.view(-1, 2) * outputs_e
+                outputs2 = outputs2.view(bs, -1).mean(dim=-1)
+                outputs += outputs2
+                outputs = outputs.view(-1, num_choices)
                 normalized = m(outputs)
                 entropy = torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
                 ents.append(entropy.cpu().item())
@@ -194,7 +211,7 @@ def main():
                     out.append(outputs.cpu())
         if args.sample:
             torch.save(torch.cat(out, dim=0), f"logging/{run_name}|step-{completed_steps}.pt")
-        if args.option == 0:
+        if args.option == 0 or args.option == 4 or args.option == 5:
             eval_metric = metric.compute()
         else:
             eval_metric = {'accuracy': -outputs.mean()}
@@ -219,9 +236,8 @@ def main():
         model = GPTNeoForCausalLM.from_pretrained(args.model_dir)
     else:
         model = BartForConditionalGeneration.from_pretrained(args.last_checkpoint)
-        e_model = RobertaForMultipleChoice.from_pretrained("roberta-large")
     model = model.to(device)
-    e_model = e_model.to(device)
+    #e_model = e_model.to(device)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         model.config.pad_token_id = model.config.eos_token_id
@@ -233,11 +249,11 @@ def main():
 
     model_name = args.model_dir.split('/')[-1]
     if args.supervised:
-        run_name=f'supervised-model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff}'
+        run_name=f'esupervised-model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff}'
     elif args.mask_e:
-        run_name=f'model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff} option-{args.option}-maskede'
+        run_name=f'emodel-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff} option-{args.option}-maskede'
     else:
-        run_name=f'model-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff} option-{args.option}'
+        run_name=f'emodel-{model_name} lr-{args.learning_rate} b-{args.batch_size*args.gradient_accumulation_steps} reg-{args.reg_coeff} option-{args.option}'
 
     if args.baseline:
         print("valid:", evaluate(eval_dataloader, "Valid"))
@@ -256,17 +272,17 @@ def main():
         },
     ]
     optim = AdamW(optimizer_grouped_parameters, lr=args.learning_rate)
-    optimizer_grouped_parameters_e = [
-        {
-            "params": [p for n, p in e_model.named_parameters() if not any(nd in n for nd in no_decay)],
-            "weight_decay": args.weight_decay,
-        },
-        {
-            "params": [p for n, p in e_model.named_parameters() if any(nd in n for nd in no_decay)],
-            "weight_decay": 0.0,
-        },
-    ]
-    optim_e = AdamW(optimizer_grouped_parameters_e, lr=args.learning_rate)
+    #optimizer_grouped_parameters_e = [
+    #    {
+    #        "params": [p for n, p in e_model.named_parameters() if not any(nd in n for nd in no_decay)],
+    #        "weight_decay": args.weight_decay,
+    #    },
+    #    {
+    #        "params": [p for n, p in e_model.named_parameters() if any(nd in n for nd in no_decay)],
+    #        "weight_decay": 0.0,
+    #    },
+    #]
+    #optim_e = AdamW(optimizer_grouped_parameters_e, lr=args.learning_rate)
     m = nn.Softmax(dim=-1)
     loss_fct = nn.CrossEntropyLoss()
 
@@ -280,12 +296,12 @@ def main():
         num_warmup_steps=int(args.warmup_ratio*args.max_train_steps),
         num_training_steps=args.max_train_steps,
     )
-    lr_scheduler_e = get_scheduler(
-        name=args.lr_scheduler_type,
-        optimizer=optim_e,
-        num_warmup_steps=int(args.warmup_ratio*args.max_train_steps),
-        num_training_steps=args.max_train_steps,
-    )
+    #lr_scheduler_e = get_scheduler(
+    #    name=args.lr_scheduler_type,
+    #    optimizer=optim_e,
+    #    num_warmup_steps=int(args.warmup_ratio*args.max_train_steps),
+    #    num_training_steps=args.max_train_steps,
+    #)
 
     progress_bar = tqdm(range(args.max_train_steps))
     completed_steps = 0
@@ -313,28 +329,34 @@ def main():
                     best_valid = valid_acc
                     if args.save_model:
                         model.save_pretrained(f"{args.output_model_dir}/{run_name}")
-            bs = len(batch['targets'])
+            bs = len(batch['targets']["input_ids"])
+            num_choices = batch['targets']["input_ids"].shape[0] / batch['labels'].shape[0]
+            assert num_choices == int(num_choices)
+            num_choices = int(num_choices)
             for key in batch:
-                batch[key] = batch[key].to(device)
-            outputs = model(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"], labels=batch['targets']).loss
-            outputs_e = e_model(input_ids=batch["e_features"], attention_mask=batch["e_features_mask"]).logits
-            reshaped_outputs = outputs.view(bs, -1).mean(dim=-1).view(-1, 2)
+                if key == "labels": batch[key] = batch[key].to(device)
+                for key2 in batch[key]:
+                    batch[key][key2] = batch[key][key2].to(device)
+            outputs = model(input_ids=batch["sources"]["input_ids"], attention_mask=batch["sources"]["attention_mask"], labels=batch["targets"]["input_ids"]).loss
+            outputs2 = model(input_ids=batch["premises"]["input_ids"], attention_mask=batch["premises"]["attention_mask"], labels=batch["reasons"]["input_ids"]).loss
+            reshaped_outputs = outputs.view(bs, -1).mean(dim=-1).view(-1, num_choices)
+            reshaped_outputs2 = outputs2.view(bs, -1).mean(dim=-1).view(-1, num_choices)
+            reshaped_outputs += reshaped_outputs2
             normalized = m(reshaped_outputs)
             entropy = torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
             if args.supervised:
-                loss = -loss_fct(reshaped_outputs.view(-1, 2), batch['labels'])
+                loss = -loss_fct(reshaped_outputs.view(-1, num_choices), batch['labels'])
             else:
-                loss = reshaped_outputs * m(outputs_e)
-                loss = loss.mean()
+                loss = reshaped_outputs.mean()
             tot_loss = loss + args.reg_coeff * entropy
             tot_loss.backward()
             if step % args.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
                 optim.step()
                 lr_scheduler.step()
                 optim.zero_grad()
-                optim_e.step()
-                lr_scheduler_e.step()
-                optim_e.zero_grad()
+                #optim_e.step()
+                #lr_scheduler_e.step()
+                #optim_e.zero_grad()
                 progress_bar.update(1)
                 completed_steps += 1
                 if not args.nolog:
