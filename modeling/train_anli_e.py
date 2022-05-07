@@ -236,8 +236,9 @@ def main():
         model = GPTNeoForCausalLM.from_pretrained(args.model_dir)
     else:
         model = BartForConditionalGeneration.from_pretrained(args.last_checkpoint)
+        e_model = BartForConditionalGeneration.from_pretrained(args.last_checkpoint)
     model = model.to(device)
-    #e_model = e_model.to(device)
+    e_model = e_model.to(device)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         model.config.pad_token_id = model.config.eos_token_id
@@ -272,17 +273,17 @@ def main():
         },
     ]
     optim = AdamW(optimizer_grouped_parameters, lr=args.learning_rate)
-    #optimizer_grouped_parameters_e = [
-    #    {
-    #        "params": [p for n, p in e_model.named_parameters() if not any(nd in n for nd in no_decay)],
-    #        "weight_decay": args.weight_decay,
-    #    },
-    #    {
-    #        "params": [p for n, p in e_model.named_parameters() if any(nd in n for nd in no_decay)],
-    #        "weight_decay": 0.0,
-    #    },
-    #]
-    #optim_e = AdamW(optimizer_grouped_parameters_e, lr=args.learning_rate)
+    optimizer_grouped_parameters_e = [
+        {
+            "params": [p for n, p in e_model.named_parameters() if not any(nd in n for nd in no_decay)],
+            "weight_decay": args.weight_decay,
+        },
+        {
+            "params": [p for n, p in e_model.named_parameters() if any(nd in n for nd in no_decay)],
+            "weight_decay": 0.0,
+        },
+    ]
+    optim_e = AdamW(optimizer_grouped_parameters_e, lr=args.learning_rate)
     m = nn.Softmax(dim=-1)
     loss_fct = nn.CrossEntropyLoss()
 
@@ -296,12 +297,12 @@ def main():
         num_warmup_steps=int(args.warmup_ratio*args.max_train_steps),
         num_training_steps=args.max_train_steps,
     )
-    #lr_scheduler_e = get_scheduler(
-    #    name=args.lr_scheduler_type,
-    #    optimizer=optim_e,
-    #    num_warmup_steps=int(args.warmup_ratio*args.max_train_steps),
-    #    num_training_steps=args.max_train_steps,
-    #)
+    lr_scheduler_e = get_scheduler(
+        name=args.lr_scheduler_type,
+        optimizer=optim_e,
+        num_warmup_steps=int(args.warmup_ratio*args.max_train_steps),
+        num_training_steps=args.max_train_steps,
+    )
 
     progress_bar = tqdm(range(args.max_train_steps))
     completed_steps = 0
@@ -354,9 +355,9 @@ def main():
                 optim.step()
                 lr_scheduler.step()
                 optim.zero_grad()
-                #optim_e.step()
-                #lr_scheduler_e.step()
-                #optim_e.zero_grad()
+                optim_e.step()
+                lr_scheduler_e.step()
+                optim_e.zero_grad()
                 progress_bar.update(1)
                 completed_steps += 1
                 if not args.nolog:
