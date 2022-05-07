@@ -248,7 +248,6 @@ def main():
 
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     args.max_train_steps = args.epoch * num_update_steps_per_epoch
-    step_size = args.reg_coeff / args.max_train_steps
     total_batch_size = args.batch_size * args.gradient_accumulation_steps
     lr_scheduler = get_scheduler(
         name=args.lr_scheduler_type,
@@ -284,11 +283,11 @@ def main():
             num_choices = int(num_choices)
             for key in batch:
                 batch[key] = batch[key].to(device)
+            batch["targets"][batch["targets"]==tokenizer.convert_tokens_to_ids(tokenizer.pad_token)] = -100
             outputs = model(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"], labels=batch['targets']).loss
             reshaped_outputs = outputs.view(bs, -1).mean(dim=-1).view(-1, num_choices)
             normalized = m(reshaped_outputs)
             entropy = args.reg_coeff * torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
-            args.reg_coeff -= step_size
             if args.supervised:
                 loss = -loss_fct(reshaped_outputs.view(-1, num_choices), batch['labels'])
             else:
