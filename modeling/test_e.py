@@ -6,6 +6,8 @@ import json
 
 tokenizer = AutoTokenizer.from_pretrained("facebook/bart-large", use_fast=True)
 model = BartForConditionalGeneration.from_pretrained(sys.argv[1])
+model2 = BartForConditionalGeneration.from_pretrained(sys.argv[1])
+model3 = BartForConditionalGeneration.from_pretrained(sys.argv[1])
 data = []
 with open("../data/alphanli/test.jsonl", 'r') as fin:
     for line in fin:
@@ -17,10 +19,14 @@ for d in data:
     in_tokenized = tokenizer(d['obs1']+d['hyp1'], return_tensors="pt")["input_ids"]
     out_tokenized = tokenizer(d['obs2'], return_tensors="pt")["input_ids"]
     loss = model(input_ids=in_tokenized, labels=out_tokenized).loss
-    print("loss for", "\""+d['hyp1']+"\"", "is", loss.mean().item())
+    loss2 = model2(input_ids=in_tokenized, labels=out_tokenized).loss
+    loss3 = model3(input_ids=in_tokenized, labels=out_tokenized).loss
+    print("loss for", "\""+d['hyp1']+"\"", "is", loss.mean().item(), loss2.mean().item(), loss3.mean().item())
     in_tokenized = tokenizer(d['obs1']+d['hyp2'], return_tensors="pt")["input_ids"]
     loss = model(input_ids=in_tokenized, labels=out_tokenized).loss
-    print("loss for", "\""+d['hyp2']+"\"", "is", loss.mean().item())
+    loss2 = model2(input_ids=in_tokenized, labels=out_tokenized).loss
+    loss3 = model3(input_ids=in_tokenized, labels=out_tokenized).loss
+    print("loss for", "\""+d['hyp2']+"\"", "is", loss.mean().item(), loss2.mean().item(), loss3.mean().item())
     while True:
         hyp = input("e: ")
         if hyp == "":
