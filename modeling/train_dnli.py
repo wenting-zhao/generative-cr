@@ -356,8 +356,10 @@ def main():
                 if key == "labels": continue
                 for key2 in batch[key]:
                     batch[key][key2] = batch[key][key2].to(device)
+            batch["targets"]["input_ids"][batch["targets"]["input_ids"]==model.config.pad_token_id] = -100
             outputs = model(input_ids=batch["sources"]["input_ids"], attention_mask=batch["sources"]["attention_mask"], labels=batch["targets"]["input_ids"]).loss
             if args.zx_model:
+                batch["reasons"]["input_ids"][batch["reasons"]["input_ids"]==model.config.pad_token_id] = -100
                 outputs2 = model2(input_ids=batch["premises"]["input_ids"], attention_mask=batch["premises"]["attention_mask"], labels=batch["reasons"]["input_ids"]).loss
             reshaped_outputs = outputs.view(bs, -1).mean(dim=-1)
             labels_l = [0]

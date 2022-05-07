@@ -159,6 +159,7 @@ def main():
                 with torch.no_grad():
                     outputs = model(input_ids=concated, labels=concated_label).loss
             else:
+                eval_batch["targets"][eval_batch["targets"]==tokenizer.convert_tokens_to_ids(tokenizer.pad_token)] = -100
                 with torch.no_grad():
                     outputs = model(input_ids=eval_batch["input_ids"], attention_mask=eval_batch["attention_mask"], labels=eval_batch["targets"]).loss
             outputs = outputs.view(bs, -1).mean(dim=-1)
@@ -267,6 +268,7 @@ def main():
             bs = len(batch['targets'])
             for key in batch:
                 batch[key] = batch[key].to(device)
+            batch["targets"][batch["targets"]==tokenizer.convert_tokens_to_ids(tokenizer.pad_token)] = -100
             outputs = model(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"], labels=batch['targets']).loss
             reshaped_outputs = outputs.view(bs, -1).mean(dim=-1)
             normalized = m(reshaped_outputs.view(-1, 3))
