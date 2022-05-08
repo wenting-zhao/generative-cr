@@ -310,11 +310,11 @@ def main():
     if not args.nolog:
         if args.supervised:
             wandb.init(name=run_name,
-                   project='generative aNLI',
+                   project='corrected generative aNLI',
                    tags=['anli'])
         else:
             wandb.init(name=run_name,
-                   project='generative aNLI',
+                   project='corrected generative aNLI',
                    tags=['anli'])
         wandb.config.lr = args.learning_rate
         wandb.watch(model)
@@ -338,6 +338,8 @@ def main():
                 if key == "labels": batch[key] = batch[key].to(device)
                 for key2 in batch[key]:
                     batch[key][key2] = batch[key][key2].to(device)
+            batch["targets"]["input_ids"][batch["targets"]["input_ids"]==model.config.pad_token_id] = -100
+            batch["reasons"]["input_ids"][batch["reasons"]["input_ids"]==model.config.pad_token_id] = -100
             outputs = model(input_ids=batch["sources"]["input_ids"], attention_mask=batch["sources"]["attention_mask"], labels=batch["targets"]["input_ids"]).loss
             outputs2 = model(input_ids=batch["premises"]["input_ids"], attention_mask=batch["premises"]["attention_mask"], labels=batch["reasons"]["input_ids"]).loss
             reshaped_outputs = outputs.view(bs, -1).mean(dim=-1).view(-1, num_choices)

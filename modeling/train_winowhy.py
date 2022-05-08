@@ -324,7 +324,7 @@ def main():
 
     if not args.nolog:
         wandb.init(name=run_name,
-               project='generative winowhy',
+               project='corrected generative winowhy',
                tags=['winowhy'])
         wandb.config.lr = args.learning_rate
         wandb.watch(model)

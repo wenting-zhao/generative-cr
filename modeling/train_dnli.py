@@ -331,7 +331,7 @@ def main():
 
     if not args.nolog:
         wandb.init(name=run_name,
-               project='generative dNLI',
+               project='corrected generative dNLI',
                tags=['dnli', args.option])
         wandb.config.lr = args.learning_rate
         wandb.watch(model)
