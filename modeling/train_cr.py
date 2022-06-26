@@ -271,9 +271,6 @@ def main():
         return eval_metric['accuracy']
 
     for epoch in range(args.epoch):
-        model_a.train()
-        #if not args.baseline:
-        #    model_r.train()
         for step, batch in enumerate(train_dataloader):
             #evaluate(test_dataloader, "Test")
             #return
@@ -281,6 +278,9 @@ def main():
             #del batch['cqs']
             #for key in batch_r:
             #    batch_r[key] = batch_r[key].to(device)
+            model_a.train()
+            #if not args.baseline:
+            #    model_r.train()
             for key in batch:
                 batch[key] = batch[key].to(device)
             outputs = model_a(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"])
