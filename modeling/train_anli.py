@@ -289,7 +289,7 @@ def main():
             normalized = m(reshaped_outputs)
             entropy = args.reg_coeff * torch.mean(-torch.sum(normalized * torch.log(normalized + 1e-9), dim = 1), dim = 0)
             if args.supervised:
-                loss = -loss_fct(reshaped_outputs.view(-1, num_choices), batch['labels'])
+                loss = loss_fct(-reshaped_outputs, batch['labels'])
             else:
                 if args.viterbi_em:
                     loss = reshaped_outputs.min(dim=-1).values

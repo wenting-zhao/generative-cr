@@ -75,7 +75,6 @@ class DataCollatorForMultipleChoice:
             pad_to_multiple_of=self.pad_to_multiple_of,
             return_tensors="pt",
         )['input_ids']
-        batch_target[batch_target==self.tokenizer.convert_tokens_to_ids(self.tokenizer.pad_token)] = -100
 
         # Un-flatten
         #batch = {k: v.view(batch_size, num_choices, -1) for k, v in batch.items()}
