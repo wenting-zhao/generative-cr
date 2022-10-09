@@ -255,7 +255,6 @@ def main():
 
     best_valid = float('-inf')
     for epoch in range(args.epoch):
-        model.train()
         for step, batch in enumerate(train_dataloader):
             if step % (500*args.gradient_accumulation_steps) == 0:
                 valid_acc = evaluate(eval_dataloader, "Valid")
@@ -264,6 +263,7 @@ def main():
                     best_valid = valid_acc
                     if args.save_model:
                         model.save_pretrained(f"{args.output_model_dir}/{run_name}")
+            model.train()
             bs = len(batch['targets'])
             for key in batch:
                 batch[key] = batch[key].to(device)

@@ -195,12 +195,17 @@ class AlphaNLIDataset(torch.utils.data.Dataset):
                 data[idx]['label'] = labels[-1]
 
         if "train" in filename:
-            if os.path.isfile(f"cache/anli_encodings_{option}.pkl"):
-                with open(f"cache/anli_encodings_{option}.pkl", 'rb') as f:
+            if "bart-large" not in path:
+                pshort = path.split('/')[-1]
+                name = f"cache/anli_encodings_{option}_{pshort}.pkl"
+            else:
+                name = f"cache/anli_encodings_{option}.pkl"
+            if os.path.isfile(name):
+                with open(name, 'rb') as f:
                     features, targets = pickle.load(f)
             else:
                 features, targets = self.preprocess_function(data, tokenizer, ending_names, option)
-                with open(f"cache/anli_encodings_{option}.pkl", 'wb') as f:
+                with open(name, 'wb') as f:
                     pickle.dump((features, targets), f)
         else:
             features, targets = self.preprocess_function(data, tokenizer, ending_names, option)

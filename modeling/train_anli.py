@@ -11,7 +11,7 @@ from typing import Optional, Union
 from transformers.file_utils import PaddingStrategy
 from transformers import get_scheduler, set_seed
 from transformers import AutoTokenizer, PreTrainedTokenizerBase
-from transformers import BartForConditionalGeneration, GPTNeoForCausalLM
+from transformers import AutoModelForSeq2SeqLM, GPTNeoForCausalLM
 from transformers import AdamW, SchedulerType
 import numpy as np
 import math
@@ -204,7 +204,7 @@ def main():
     if args.baseline:
         model = GPTNeoForCausalLM.from_pretrained(args.model_dir)
     else:
-        model = BartForConditionalGeneration.from_pretrained(args.last_checkpoint)
+        model = AutoModelForSeq2SeqLM.from_pretrained(args.last_checkpoint)
     model = model.to(device)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -268,7 +268,6 @@ def main():
 
     best_valid = float('-inf')
     for epoch in range(args.epoch):
-        model.train()
         for step, batch in enumerate(train_dataloader):
             if step % (500*args.gradient_accumulation_steps) == 0:
                 valid_acc = evaluate(eval_dataloader, "Valid")
@@ -277,6 +276,7 @@ def main():
                     best_valid = valid_acc
                     if args.save_model:
                         model.save_pretrained(f"{args.output_model_dir}/{run_name}")
+            model.train()
             bs = len(batch['targets'])
             num_choices = batch['targets'].shape[0] / batch['labels'].shape[0]
             assert num_choices == int(num_choices)

@@ -333,7 +333,6 @@ def main():
 
     best_valid = float('-inf')
     for epoch in range(args.epoch):
-        model.train()
         if args.zx_model:
             model2.train()
         for step, batch in enumerate(train_dataloader):
@@ -341,6 +340,7 @@ def main():
                 valid_acc = evaluate(eval_dataloader, "Valid")
                 if args.save_model:
                     model.save_pretrained(f"{args.output_model_dir}/{run_name}")
+            model.train()
             bs = len(batch['sources']["input_ids"])
             for key in batch:
                 if key == "labels": continue
