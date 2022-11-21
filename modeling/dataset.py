@@ -260,16 +260,21 @@ class SenMakingDataset(torch.utils.data.Dataset):
         ending_names = ["OptionA", "OptionB", "OptionC"]
         data = []
         labels = []
-        with open(filename, newline='') as csvfile:
-            reader = csv.DictReader(csvfile)
-            for row in reader:
-                data.append(row)
-        with open(filename.replace(".csv", "_label.csv"), 'r') as fin:
-            letter2num = {"A": 0, "B": 1, "C": 2}
-            for idx, line in enumerate(fin):
-                tmp = line.split(',')[-1].strip()
-                labels.append(letter2num[tmp])
-                data[idx]['label'] = labels[-1]
+        if filename.endswith(".csv"):
+            with open(filename, newline='') as csvfile:
+                reader = csv.DictReader(csvfile)
+                for row in reader:
+                    data.append(row)
+            with open(filename.replace(".csv", "_label.csv"), 'r') as fin:
+                letter2num = {"A": 0, "B": 1, "C": 2}
+                for idx, line in enumerate(fin):
+                    tmp = line.split(',')[-1].strip()
+                    labels.append(letter2num[tmp])
+                    data[idx]['label'] = labels[-1]
+        else:
+            with open(filename, 'r') as f:
+                data = json.load(f)
+            labels = [0] * len(data)
 
         if "train" in filename:
             if os.path.isfile(f"cache/sen_encodings.pkl"):
